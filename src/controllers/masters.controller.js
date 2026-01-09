@@ -29,7 +29,8 @@ export const getStoneController = async (req, res) => {
           grs AS certificate,
           min_height AS minHeight,
           max_height AS maxHeight,
-          mou_type AS mouType
+          mou_type AS mouType,
+          cut
         FROM stone_master
         WHERE
           (@search IS NULL
@@ -93,7 +94,8 @@ export const getStoneMasterController = async (req, res) => {
           grs AS certificate,
           min_height AS minHeight,
           max_height AS maxHeight,
-          mou_type AS mouType
+          mou_type AS mouType,
+          cut
         FROM stone_master
       `);
 
@@ -125,6 +127,7 @@ export const postStoneController = async (req, res) => {
       minHeight,
       maxHeight,
       mouType,
+      cut
     } = req.body;
 
     if (!code || !stoneName) {
@@ -165,6 +168,7 @@ export const postStoneController = async (req, res) => {
       .input("min_height", sql.Int, minHeight || null)
       .input("max_height", sql.Int, maxHeight || null)
       .input("mou_type", sql.NVarChar, mouType || null)
+      .input("cut", sql.NVarChar, cut || null)
       .query(`
         INSERT INTO stone_master (
           sku,
@@ -179,7 +183,8 @@ export const postStoneController = async (req, res) => {
           grs,
           min_height,
           max_height,
-          mou_type
+          mou_type,
+          cut
         )
         VALUES (
           @sku,
@@ -194,7 +199,8 @@ export const postStoneController = async (req, res) => {
           @grs,
           @min_height,
           @max_height,
-          @mou_type
+          @mou_type,
+          @cut
         )
       `);
 
