@@ -5,7 +5,6 @@ export const getStoneController = async (req, res) => {
     const page = parseInt(req.query.page || "1");
     const limit = parseInt(req.query.limit || "10");
     const search = req.query.search || null;
-
     const offset = (page - 1) * limit;
 
     const pool = await getDbPool();
@@ -17,20 +16,26 @@ export const getStoneController = async (req, res) => {
       .input("search", sql.NVarChar, search)
       .query(`
         SELECT
-            id,
-            sku AS code,
-            stone_name AS family,
-            stone_name AS stoneName,
-            size,
-            quality AS grade,
-            shape,
-            '' AS colour,
-            '' AS mou,
-            '' AS certificate,
-            stone_type AS category
+          id,
+          sku AS code,
+          stone_name AS stoneName,
+          family,
+          stone_type AS category,
+          size,
+          shape,
+          quality AS grade,
+          colour,
+          mou,
+          grs AS certificate,
+          min_height AS minHeight,
+          max_height AS maxHeight,
+          mou_type AS mouType
         FROM stone_master
         WHERE
-            (@search IS NULL OR sku LIKE '%' + @search + '%' OR stone_name LIKE '%' + @search + '%')
+          (@search IS NULL
+            OR sku LIKE '%' + @search + '%'
+            OR stone_name LIKE '%' + @search + '%'
+          )
         ORDER BY id DESC
         OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
       `);
@@ -42,7 +47,10 @@ export const getStoneController = async (req, res) => {
         SELECT COUNT(*) AS total
         FROM stone_master
         WHERE
-            (@search IS NULL OR sku LIKE '%' + @search + '%' OR stone_name LIKE '%' + @search + '%')
+          (@search IS NULL
+            OR sku LIKE '%' + @search + '%'
+            OR stone_name LIKE '%' + @search + '%'
+          )
       `);
 
     res.json({
@@ -63,6 +71,7 @@ export const getStoneController = async (req, res) => {
     });
   }
 };
+
 export const getStoneMasterController = async (req, res) => {
   try {
     const pool = await getDbPool();
@@ -72,7 +81,19 @@ export const getStoneMasterController = async (req, res) => {
       .query(`
         SELECT
             id as value,
-            stone_name AS label
+            stone_name AS label,
+            sku AS code,
+          family,
+          stone_type AS category,
+          size,
+          shape,
+          quality AS grade,
+          colour,
+          mou,
+          grs AS certificate,
+          min_height AS minHeight,
+          max_height AS maxHeight,
+          mou_type AS mouType
         FROM stone_master
       `);
 
@@ -101,6 +122,9 @@ export const postStoneController = async (req, res) => {
       colour,
       mou,
       certificate,
+      minHeight,
+      maxHeight,
+      mouType,
     } = req.body;
 
     if (!code || !stoneName) {
@@ -112,13 +136,11 @@ export const postStoneController = async (req, res) => {
 
     const pool = await getDbPool();
 
-    /* ---- Check Duplicate SKU ---- */
+    /* ---- Check Duplicate Code ---- */
     const duplicate = await pool
       .request()
       .input("sku", sql.NVarChar, code)
-      .query(`
-        SELECT id FROM stone_master WHERE sku = @sku
-      `);
+      .query(`SELECT id FROM stone_master WHERE sku = @sku`);
 
     if (duplicate.recordset.length > 0) {
       return res.status(409).json({
@@ -132,29 +154,47 @@ export const postStoneController = async (req, res) => {
       .request()
       .input("sku", sql.NVarChar, code)
       .input("stone_name", sql.NVarChar, stoneName)
+      .input("family", sql.NVarChar, family || null)
       .input("stone_type", sql.NVarChar, category || null)
+      .input("size", sql.NVarChar, size || null)
       .input("shape", sql.NVarChar, shape || null)
       .input("quality", sql.NVarChar, grade || null)
-      .input("size", sql.NVarChar, size || null)
+      .input("colour", sql.NVarChar, colour || null)
+      .input("mou", sql.NVarChar, mou || null)
       .input("grs", sql.NVarChar, certificate || null)
+      .input("min_height", sql.Int, minHeight || null)
+      .input("max_height", sql.Int, maxHeight || null)
+      .input("mou_type", sql.NVarChar, mouType || null)
       .query(`
         INSERT INTO stone_master (
           sku,
           stone_name,
+          family,
           stone_type,
+          size,
           shape,
           quality,
-          size,
-          grs
+          colour,
+          mou,
+          grs,
+          min_height,
+          max_height,
+          mou_type
         )
         VALUES (
           @sku,
           @stone_name,
+          @family,
           @stone_type,
+          @size,
           @shape,
           @quality,
-          @size,
-          @grs
+          @colour,
+          @mou,
+          @grs,
+          @min_height,
+          @max_height,
+          @mou_type
         )
       `);
 
@@ -171,12 +211,12 @@ export const postStoneController = async (req, res) => {
   }
 };
 
+
 export const getToolsController = async (req, res) => {
   try {
     const page = parseInt(req.query.page || "1");
     const limit = parseInt(req.query.limit || "10");
     const search = req.query.search || null;
-
     const offset = (page - 1) * limit;
 
     const pool = await getDbPool();
@@ -191,14 +231,18 @@ export const getToolsController = async (req, res) => {
           id,
           tool_code AS toolCode,
           tool_name AS toolName,
-          description,
           type,
+          usage,
+          comments,
+          notes,
           mou,
-          size
+          category
         FROM tool_master
         WHERE
-          (@search IS NULL OR tool_code LIKE '%' + @search + '%' 
-           OR tool_name LIKE '%' + @search + '%')
+          (@search IS NULL
+            OR tool_code LIKE '%' + @search + '%'
+            OR tool_name LIKE '%' + @search + '%'
+          )
         ORDER BY id DESC
         OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
       `);
@@ -210,8 +254,10 @@ export const getToolsController = async (req, res) => {
         SELECT COUNT(*) AS total
         FROM tool_master
         WHERE
-          (@search IS NULL OR tool_code LIKE '%' + @search + '%' 
-           OR tool_name LIKE '%' + @search + '%')
+          (@search IS NULL
+            OR tool_code LIKE '%' + @search + '%'
+            OR tool_name LIKE '%' + @search + '%'
+          )
       `);
 
     res.json({
@@ -232,6 +278,7 @@ export const getToolsController = async (req, res) => {
     });
   }
 };
+
 export const getToolsMasterController = async (req, res) => {
   try {
     const pool = await getDbPool();
@@ -241,7 +288,13 @@ export const getToolsMasterController = async (req, res) => {
       .query(`
         SELECT
           id as value,
-          tool_name AS label
+          tool_name AS label,
+          type,
+          usage,
+          comments,
+          notes,
+          mou,
+          category
         FROM tool_master
       `);
 
@@ -260,7 +313,16 @@ export const getToolsMasterController = async (req, res) => {
 
 export const postToolsController = async (req, res) => {
   try {
-    const { toolCode, toolName, description, type, mou, size } = req.body;
+    const {
+      toolCode,
+      toolName,
+      type,
+      usage,
+      comments,
+      notes,
+      mou,
+      category,
+    } = req.body;
 
     if (!toolCode || !toolName) {
       return res.status(400).json({
@@ -271,34 +333,57 @@ export const postToolsController = async (req, res) => {
 
     const pool = await getDbPool();
 
+    /* ---- Duplicate Check ---- */
     const exists = await pool
       .request()
-      .input("toolCode", sql.NVarChar, toolCode)
-      .query(`SELECT id FROM tool_master WHERE tool_code = @toolCode`);
+      .input("tool_code", sql.NVarChar, toolCode)
+      .query(`SELECT id FROM tool_master WHERE tool_code = @tool_code`);
 
-    if (exists.recordset.length) {
+    if (exists.recordset.length > 0) {
       return res.status(409).json({
         success: false,
         message: "Tool code already exists",
       });
     }
 
+    /* ---- Insert Tool ---- */
     await pool
       .request()
       .input("tool_code", sql.NVarChar, toolCode)
       .input("tool_name", sql.NVarChar, toolName)
-      .input("description", sql.NVarChar, description)
-      .input("type", sql.NVarChar, type)
-      .input("mou", sql.NVarChar, mou)
-      .input("size", sql.NVarChar, size)
+      .input("type", sql.NVarChar, type || null)
+      .input("usage", sql.NVarChar, usage || null)
+      .input("comments", sql.NVarChar, comments || null)
+      .input("notes", sql.NVarChar, notes || null)
+      .input("mou", sql.NVarChar, mou || null)
+      .input("category", sql.NVarChar, category || null)
       .query(`
-        INSERT INTO tool_master
-        (tool_code, tool_name, description, type, mou, size)
-        VALUES
-        (@tool_code, @tool_name, @description, @type, @mou, @size)
+        INSERT INTO tool_master (
+          tool_code,
+          tool_name,
+          type,
+          usage,
+          comments,
+          notes,
+          mou,
+          category
+        )
+        VALUES (
+          @tool_code,
+          @tool_name,
+          @type,
+          @usage,
+          @comments,
+          @notes,
+          @mou,
+          @category
+        )
       `);
 
-    res.status(201).json({ success: true });
+    res.status(201).json({
+      success: true,
+      message: "Tool created successfully",
+    });
   } catch (error) {
     console.error("Create Tool Error:", error);
     res.status(500).json({
@@ -308,8 +393,9 @@ export const postToolsController = async (req, res) => {
   }
 };
 
+
 export const getBrokersController = async (req, res) => {
-   try {
+  try {
     const page = parseInt(req.query.page || "1");
     const limit = parseInt(req.query.limit || "10");
     const search = req.query.search || null;
@@ -369,7 +455,7 @@ export const getBrokersController = async (req, res) => {
   }
 };
 export const getBrokersMasterController = async (req, res) => {
-   try {
+  try {
     const pool = await getDbPool();
 
     const dataQuery = await pool
@@ -394,7 +480,7 @@ export const getBrokersMasterController = async (req, res) => {
 };
 
 export const postBrokersController = async (req, res) => {
-   try {
+  try {
     const {
       brokerCode,
       brokerName,
