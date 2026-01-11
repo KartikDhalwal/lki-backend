@@ -82,8 +82,8 @@ export const getStoneMasterController = async (req, res) => {
       .query(`
         SELECT
             id as value,
-            stone_name AS label,
-            sku AS code,
+            stone_name AS stoneName,
+            sku AS label,
           family,
           stone_type AS category,
           size,
