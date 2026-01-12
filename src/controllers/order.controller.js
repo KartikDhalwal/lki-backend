@@ -6,9 +6,9 @@ export const postOrderController = async (req, res) => {
 
   try {
     const {
-      instructions,
-      deliveryDate,
       status,
+      deliveryDate,
+      instructions,
       stones = [],
       tools = [],
     } = req.body;
@@ -26,12 +26,11 @@ export const postOrderController = async (req, res) => {
       0
     );
 
-    /* ---- Generate Order No ---- */
     const orderNo = `ORD-${Date.now()}`;
 
     await transaction.begin();
 
-    /* ---- Insert Order Header ---- */
+    /* ---------- ORDER HEADER ---------- */
     const orderResult = await transaction
       .request()
       .input("order_no", sql.NVarChar, orderNo)
@@ -59,59 +58,73 @@ export const postOrderController = async (req, res) => {
 
     const orderId = orderResult.recordset[0].id;
 
-    /* ---- Helper: Insert Items ---- */
-    const insertItem = async (item, type) => {
+    /* ---------- STONES ---------- */
+    for (const stone of stones) {
       await transaction
         .request()
         .input("order_id", sql.Int, orderId)
-        .input("item_type", sql.NVarChar, type)
-        .input("item_id", sql.Int, item.stone.value)
-        .input("item_name", sql.NVarChar, item.stone.label)
-        .input("broker_id", sql.Int, item.broker.value)
-        .input("broker_name", sql.NVarChar, item.broker.label)
-        .input("quantity", sql.Decimal(10, 2), item.quantity)
-        .input("quantity_type", sql.NVarChar, item.quantityType)
-        .input("color", sql.NVarChar, item.color || null)
-        .input("size", sql.NVarChar, item.size || null)
-        .input("shape", sql.NVarChar, item.shape || null)
+        .input("stone_id", sql.Int, stone.stoneId)
+        .input("broker_id", sql.Int, stone.brokerId)
+        .input("quantity", sql.Int, stone.quantity)
+        .input("quantity_type", sql.NVarChar, stone.quantityType)
+        .input("size", sql.NVarChar, stone.size || null)
+        .input("shape", sql.NVarChar, stone.shape || null)
+        .input("color", sql.NVarChar, stone.color || null)
+        .input("min_height", sql.Int, stone.minHeight || null)
+        .input("max_height", sql.Int, stone.maxHeight || null)
         .query(`
-          INSERT INTO order_items (
+          INSERT INTO order_stones (
             order_id,
-            item_type,
-            item_id,
-            item_name,
+            stone_id,
             broker_id,
-            broker_name,
             quantity,
             quantity_type,
-            color,
             size,
-            shape
+            shape,
+            color,
+            min_height,
+            max_height
           )
           VALUES (
             @order_id,
-            @item_type,
-            @item_id,
-            @item_name,
+            @stone_id,
             @broker_id,
-            @broker_name,
             @quantity,
             @quantity_type,
-            @color,
             @size,
-            @shape
+            @shape,
+            @color,
+            @min_height,
+            @max_height
           )
         `);
-    };
-
-    /* ---- Insert Stone Items ---- */
-    for (const stone of stones) {
-      await insertItem(stone, "STONE");
     }
 
-    /* ---- Insert Tool Items ---- */
+    /* ---------- TOOLS ---------- */
     for (const tool of tools) {
-      await insertItem(tool, "TOOL");
+      await transaction
+        .request()
+        .input("order_id", sql.Int, orderId)
+        .input("tool_id", sql.Int, tool.toolId)
+        .input("manufacturer_id", sql.Int, tool.manufacturerId)
+        .input("quantity", sql.Int, tool.quantity)
+        .input("mou", sql.NVarChar, tool.mou)
+        .query(`
+          INSERT INTO order_tools (
+            order_id,
+            tool_id,
+            manufacturer_id,
+            quantity,
+            mou
+          )
+          VALUES (
+            @order_id,
+            @tool_id,
+            @manufacturer_id,
+            @quantity,
+            @mou
+          )
+        `);
     }
 
     await transaction.commit();
@@ -131,6 +144,7 @@ export const postOrderController = async (req, res) => {
     });
   }
 };
+
 
 export const listOrdersController = async (req, res) => {
   try {
