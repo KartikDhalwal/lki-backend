@@ -155,48 +155,84 @@ export const listOrdersController = async (req, res) => {
 
     const pool = await getDbPool();
 
-    /* ---------- DATA QUERY ---------- */
+    /* ================= DATA QUERY ================= */
     const dataResult = await pool
       .request()
       .input("offset", sql.Int, offset)
       .input("limit", sql.Int, limit)
       .input("search", sql.NVarChar, search)
       .query(`
+        WITH order_data AS (
+          SELECT
+            o.id,
+            o.order_no,
+            o.status,
+            o.created_at,
+            o.delivery_date,
+
+            /* quantities */
+            SUM(os.quantity) AS stone_qty,
+            SUM(ot.quantity) AS tool_qty,
+
+            /* references */
+            MAX(os.stone_id) AS stone_id,
+            MAX(os.broker_id) AS broker_id,
+            MAX(bm.broker_name) AS broker_name,
+            MAX(ot.tool_id) AS tool_id
+
+          FROM orders o
+          LEFT JOIN order_stones os 
+            ON os.order_id = o.id
+          LEFT JOIN broker_master bm 
+            ON bm.id = os.broker_id
+          LEFT JOIN order_tools ot 
+            ON ot.order_id = o.id
+
+          WHERE
+            (@search IS NULL OR o.order_no LIKE '%' + @search + '%')
+
+          GROUP BY
+            o.id, o.order_no, o.status, o.created_at, o.delivery_date
+        )
         SELECT
-          o.id,
-          o.order_no AS orderId,
-          o.status,
-          o.created_at AS orderCreated,
-          o.delivery_date AS expected,
-          SUM(oi.quantity) AS totalQuantity,
-          MAX(oi.item_type) AS type,
-          MAX(oi.item_name) AS stoneId,
-          MAX(oi.broker_name) AS broker
-        FROM orders o
-        LEFT JOIN order_items oi ON oi.order_id = o.id
-        WHERE
-          (@search IS NULL
-            OR o.order_no LIKE '%' + @search + '%'
-            OR oi.item_name LIKE '%' + @search + '%'
-            OR oi.broker_name LIKE '%' + @search + '%')
-        GROUP BY o.id, o.order_no, o.status, o.created_at, o.delivery_date
-        ORDER BY o.created_at DESC
+          id,
+          order_no AS orderId,
+          status,
+          created_at AS orderCreated,
+          delivery_date AS expected,
+
+          ISNULL(stone_qty, 0) + ISNULL(tool_qty, 0) AS quantity,
+
+          CASE
+            WHEN stone_qty IS NOT NULL AND tool_qty IS NOT NULL THEN 'MIXED'
+            WHEN stone_qty IS NOT NULL THEN 'STONE'
+            WHEN tool_qty IS NOT NULL THEN 'TOOL'
+            ELSE 'UNKNOWN'
+          END AS type,
+
+          /* display reference */
+          CASE
+            WHEN stone_id IS NOT NULL THEN CAST(stone_id AS NVARCHAR)
+            WHEN tool_id IS NOT NULL THEN CAST(tool_id AS NVARCHAR)
+            ELSE '-'
+          END AS stoneId,
+
+          broker_name AS broker
+
+        FROM order_data
+        ORDER BY orderCreated DESC
         OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
       `);
 
-    /* ---------- COUNT QUERY ---------- */
+    /* ================= COUNT QUERY ================= */
     const countResult = await pool
       .request()
       .input("search", sql.NVarChar, search)
       .query(`
-        SELECT COUNT(DISTINCT o.id) AS total
+        SELECT COUNT(*) AS total
         FROM orders o
-        LEFT JOIN order_items oi ON oi.order_id = o.id
         WHERE
-          (@search IS NULL
-            OR o.order_no LIKE '%' + @search + '%'
-            OR oi.item_name LIKE '%' + @search + '%'
-            OR oi.broker_name LIKE '%' + @search + '%')
+          (@search IS NULL OR o.order_no LIKE '%' + @search + '%')
       `);
 
     const totalItems = countResult.recordset[0].total;
@@ -219,3 +255,5 @@ export const listOrdersController = async (req, res) => {
     });
   }
 };
+
+
