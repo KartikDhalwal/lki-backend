@@ -31,7 +31,6 @@ export const getDbPool = async () => {
   try {
     if (!pool) {
       pool = await sql.connect(dbConfig);
-      console.log("✅ MSSQL connected");
     }
     return pool;
   } catch (error) {

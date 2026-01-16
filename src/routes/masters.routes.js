@@ -1,5 +1,5 @@
 import express from "express";
-import { getBrokersController, getBrokersMasterController, getStoneController, getStoneMasterController, getToolsController, getToolsMasterController, postBrokersController, postStoneController, postToolsController } from "../controllers/masters.controller.js";
+import { addMasterOptionController, getBrokersController, getBrokersMasterController, getMasterOptions, getStoneController, getStoneMasterController, getToolsController, getToolsMasterController, postBrokersController, postStoneController, postToolsController } from "../controllers/masters.controller.js";
 
 const router = express.Router();
 
@@ -12,5 +12,7 @@ router.post("/tools", postToolsController);
 router.get("/brokers", getBrokersController);
 router.get("/master-brokers", getBrokersMasterController);
 router.post("/brokers", postBrokersController);
+router.post("/add-option", addMasterOptionController);
+router.get("/:type", getMasterOptions);
 
 export default router;

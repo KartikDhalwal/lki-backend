@@ -330,10 +330,10 @@ export const postToolsController = async (req, res) => {
       category,
     } = req.body;
 
-    if (!toolCode || !toolName) {
+    if (!toolName) {
       return res.status(400).json({
         success: false,
-        message: "Tool code and name are required",
+        message: "Tool name is required",
       });
     }
 
@@ -488,7 +488,7 @@ export const getBrokersMasterController = async (req, res) => {
 export const postBrokersController = async (req, res) => {
   try {
     const {
-      brokerCode,
+      // brokerCode,
       brokerName,
       phoneNumber,
       alternateNumber,
@@ -496,32 +496,34 @@ export const postBrokersController = async (req, res) => {
       gstNumber,
       address,
       status,
+      bankAcNo,
+      bankName,
     } = req.body;
 
-    if (!brokerCode || !brokerName) {
+    if (!brokerName) {
       return res.status(400).json({
         success: false,
-        message: "Broker Code and Broker Name are required",
+        message: "Broker Name are required",
       });
     }
 
     const pool = await getDbPool();
 
-    const exists = await pool
-      .request()
-      .input("brokerCode", sql.NVarChar, brokerCode)
-      .query(`SELECT id FROM broker_master WHERE broker_code = @brokerCode`);
+    // const exists = await pool
+    //   .request()
+    //   .input("brokerCode", sql.NVarChar, brokerCode)
+    //   .query(`SELECT id FROM broker_master WHERE broker_code = @brokerCode`);
 
-    if (exists.recordset.length) {
-      return res.status(409).json({
-        success: false,
-        message: "Broker code already exists",
-      });
-    }
+    // if (exists.recordset.length) {
+    //   return res.status(409).json({
+    //     success: false,
+    //     message: "Broker code already exists",
+    //   });
+    // }
 
     await pool
       .request()
-      .input("broker_code", sql.NVarChar, brokerCode)
+      // .input("broker_code", sql.NVarChar, brokerCode)
       .input("broker_name", sql.NVarChar, brokerName)
       .input("phone_number", sql.NVarChar, phoneNumber)
       .input("alternate_number", sql.NVarChar, alternateNumber)
@@ -529,11 +531,13 @@ export const postBrokersController = async (req, res) => {
       .input("gst_number", sql.NVarChar, gstNumber)
       .input("address", sql.NVarChar, address)
       .input("status", sql.NVarChar, status || "Active")
+      .input("bankAcNo", sql.NVarChar, bankAcNo)
+      .input("bankName", sql.NVarChar, bankName)
       .query(`
         INSERT INTO broker_master
-        (broker_code, broker_name, phone_number, alternate_number, city, gst_number, address, status)
+        (broker_name, phone_number, alternate_number, city, gst_number, address, status,bankAcNo,bankName)
         VALUES
-        (@broker_code, @broker_name, @phone_number, @alternate_number, @city, @gst_number, @address, @status)
+        (@broker_name, @phone_number, @alternate_number, @city, @gst_number, @address, @status,@bankAcNo,@bankName)
       `);
 
     res.status(201).json({ success: true });
@@ -543,5 +547,115 @@ export const postBrokersController = async (req, res) => {
       success: false,
       message: "Failed to create broker",
     });
+  }
+};
+
+export const addMasterOptionController = async (req, res) => {
+  const { type, value } = req.body;
+
+  if (!type || !value) {
+    return res.status(400).json({
+      success: false,
+      message: "master type and value are required",
+    });
+  }
+
+  const pool = await getDbPool();
+  const transaction = new sql.Transaction(pool);
+
+  try {
+    await transaction.begin();
+
+    // 1️⃣ Check duplicate (type + name)
+    const existsRequest = new sql.Request(transaction);
+    const exists = await existsRequest
+      .input("master_type", sql.NVarChar, type)
+      .input("master_name", sql.NVarChar, value)
+      .query(`
+        SELECT 1
+        FROM master_options
+        WHERE master_type = @master_type
+          AND master_name = @master_name
+      `);
+
+    if (exists.recordset.length > 0) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `${value} already exists in ${type}`,
+      });
+    }
+
+    // 2️⃣ Get next master_code WITH LOCK (CRITICAL)
+    const codeRequest = new sql.Request(transaction);
+    const maxCodeResult = await codeRequest
+      .input("master_type", sql.NVarChar, type)
+      .query(`
+        SELECT ISNULL(MAX(master_code), 0) AS maxCode
+        FROM master_options WITH (UPDLOCK, HOLDLOCK)
+        WHERE master_type = @master_type
+      `);
+
+    const nextMasterCode = maxCodeResult.recordset[0].maxCode + 1;
+
+    // 3️⃣ Insert new record
+    const insertRequest = new sql.Request(transaction);
+    await insertRequest
+      .input("master_code", sql.Int, nextMasterCode)
+      .input("master_type", sql.NVarChar, type)
+      .input("master_name", sql.NVarChar, value)
+      .input("isActive", sql.Bit, 1)
+      .query(`
+        INSERT INTO master_options
+          (master_code, master_type, master_name, isActive)
+        VALUES
+          (@master_code, @master_type, @master_name, @isActive)
+      `);
+
+    await transaction.commit();
+
+    return res.status(201).json({
+      success: true,
+      message: "Master option added successfully",
+      data: {
+        master_code: nextMasterCode,
+        master_type: type,
+        master_name: value,
+      },
+    });
+  } catch (error) {
+    await transaction.rollback();
+    console.error("Add Master Option Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error?.message || "Internal server error",
+    });
+  }
+};
+
+export const getMasterOptions = async (req, res) => {
+  const { type } = req.params;
+
+  try {
+    const pool = await getDbPool();
+
+    const result = await pool
+      .request()
+      .input("type", sql.NVarChar, type)
+      .query(`
+        SELECT master_code as id, master_name as name
+        FROM master_options
+        WHERE master_type = @type AND isActive = 1
+        ORDER BY name
+      `);
+
+    return res.json({
+      success: true,
+      data: result.recordset,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };
