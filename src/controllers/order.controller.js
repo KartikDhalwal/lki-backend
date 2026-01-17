@@ -11,7 +11,7 @@ export const postOrderController = async (req, res) => {
       stones = [],
       tools = [],
     } = req.body;
-
+    console.log(tools, 'tools')
     if (!stones.length && !tools.length) {
       return res.status(400).json({
         success: false,
@@ -112,6 +112,7 @@ export const postOrderController = async (req, res) => {
           stone.lengthOfString || null
         )
         .input("comments", sql.NVarChar, stone.comments || null)
+        .input("supply_date", sql.DateTime, stone.supplyDate || null)
         .query(`
           INSERT INTO order_stones (
             order_id,
@@ -129,7 +130,8 @@ export const postOrderController = async (req, res) => {
             min_height,
             max_height,
             length_of_string,
-            comments
+            comments,
+            supply_date
           )
           VALUES (
             @order_id,
@@ -147,7 +149,8 @@ export const postOrderController = async (req, res) => {
             @min_height,
             @max_height,
             @length_of_string,
-            @comments
+            @comments,
+            @supply_date
           )
         `);
     }
@@ -159,7 +162,6 @@ export const postOrderController = async (req, res) => {
         .input("tool_id", sql.Int, tool.toolId)
         .input("manufacturer_id", sql.Int, tool.manufacturerId || null)
         .input("quantity", sql.Int, tool.quantity)
-        .input("quantity_type", sql.NVarChar, tool.quantityType)
         .input("mou", sql.NVarChar, tool.mou || null)
         .input("usage", sql.NVarChar, tool.usage || null)
         .input("guage_size", sql.NVarChar, tool.guageSize || null)
@@ -175,7 +177,6 @@ export const postOrderController = async (req, res) => {
             tool_id,
             manufacturer_id,
             quantity,
-            quantity_type,
             mou,
             usage,
             guage_size,
@@ -187,7 +188,6 @@ export const postOrderController = async (req, res) => {
             @tool_id,
             @manufacturer_id,
             @quantity,
-            @quantity_type,
             @mou,
             @usage,
             @guage_size,
@@ -350,10 +350,10 @@ export const getOrderByIdController = async (req, res) => {
 
     const order = orderRes.recordset[0];
 
-const stonesRes = await pool
-  .request()
-  .input("order_id", sql.Int, id)
-  .query(`
+    const stonesRes = await pool
+      .request()
+      .input("order_id", sql.Int, id)
+      .query(`
     SELECT 
       os.*,
 

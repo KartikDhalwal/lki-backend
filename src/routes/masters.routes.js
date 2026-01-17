@@ -1,5 +1,5 @@
 import express from "express";
-import { addMasterOptionController, getBrokersController, getBrokersMasterController, getMasterOptions, getStoneController, getStoneMasterController, getToolsController, getToolsMasterController, postBrokersController, postStoneController, postToolsController } from "../controllers/masters.controller.js";
+import { addMasterOptionController, createPriceLogicController, getBrokersController, getBrokersMasterController, getMasterOptions, getNextPriceLogicIdController, getStoneController, getStoneMasterController, getToolsController, getToolsMasterController, listPriceLogicController, postBrokersController, postStoneController, postToolsController, togglePriceLogicStatusController } from "../controllers/masters.controller.js";
 
 const router = express.Router();
 
@@ -13,6 +13,11 @@ router.get("/brokers", getBrokersController);
 router.get("/master-brokers", getBrokersMasterController);
 router.post("/brokers", postBrokersController);
 router.post("/add-option", addMasterOptionController);
+router.get("/list-price-logic", listPriceLogicController);
+router.post("/price-logic", createPriceLogicController);
+router.get("/price-logic/next-id", getNextPriceLogicIdController);
+router.patch("/price-logic/:id/status", togglePriceLogicStatusController);
 router.get("/:type", getMasterOptions);
+
 
 export default router;

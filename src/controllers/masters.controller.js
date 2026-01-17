@@ -235,7 +235,6 @@ export const getToolsController = async (req, res) => {
       .query(`
         SELECT
           id,
-          tool_code AS toolCode,
           tool_name AS toolName,
           type,
           usage,
@@ -246,7 +245,6 @@ export const getToolsController = async (req, res) => {
         FROM tool_master
         WHERE
           (@search IS NULL
-            OR tool_code LIKE '%' + @search + '%'
             OR tool_name LIKE '%' + @search + '%'
           )
         ORDER BY id DESC
@@ -261,7 +259,6 @@ export const getToolsController = async (req, res) => {
         FROM tool_master
         WHERE
           (@search IS NULL
-            OR tool_code LIKE '%' + @search + '%'
             OR tool_name LIKE '%' + @search + '%'
           )
       `);
@@ -318,9 +315,9 @@ export const getToolsMasterController = async (req, res) => {
 };
 
 export const postToolsController = async (req, res) => {
+  console.log(req.body, 'req.body')
   try {
     const {
-      toolCode,
       toolName,
       type,
       usage,
@@ -339,23 +336,10 @@ export const postToolsController = async (req, res) => {
 
     const pool = await getDbPool();
 
-    /* ---- Duplicate Check ---- */
-    const exists = await pool
-      .request()
-      .input("tool_code", sql.NVarChar, toolCode)
-      .query(`SELECT id FROM tool_master WHERE tool_code = @tool_code`);
-
-    if (exists.recordset.length > 0) {
-      return res.status(409).json({
-        success: false,
-        message: "Tool code already exists",
-      });
-    }
 
     /* ---- Insert Tool ---- */
     await pool
       .request()
-      .input("tool_code", sql.NVarChar, toolCode)
       .input("tool_name", sql.NVarChar, toolName)
       .input("type", sql.NVarChar, type || null)
       .input("usage", sql.NVarChar, usage || null)
@@ -365,7 +349,6 @@ export const postToolsController = async (req, res) => {
       .input("category", sql.NVarChar, category || null)
       .query(`
         INSERT INTO tool_master (
-          tool_code,
           tool_name,
           type,
           usage,
@@ -375,7 +358,6 @@ export const postToolsController = async (req, res) => {
           category
         )
         VALUES (
-          @tool_code,
           @tool_name,
           @type,
           @usage,
@@ -659,3 +641,191 @@ export const getMasterOptions = async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
+
+export const createPriceLogicController = async (req, res) => {
+  console.log(req.body, 'req.body')
+  const pool = await getDbPool();
+  const transaction = new sql.Transaction(pool);
+
+  try {
+    const {
+      status,
+      stone,
+      stoneName,
+      basePrice,
+      minPrice,
+      maxPrice,
+      updatedBy,
+    } = req.body;
+
+    // 🔒 Basic validation
+    if (!stone || !basePrice) {
+      return res.status(400).json({
+        success: false,
+        message: "Required fields are missing",
+      });
+    }
+
+    await transaction.begin();
+
+    const request = new sql.Request(transaction);
+
+    await request
+      .input("status", sql.Bit, status ? 1 : 0)
+      .input("stoneId", sql.Int, Number(stone))
+      .input("stoneName", sql.VarChar(100), stoneName)
+      .input("basePrice", sql.Decimal(18, 2), Number(basePrice))
+      .input("minPrice", sql.Decimal(18, 2), minPrice ? Number(minPrice) : null)
+      .input("maxPrice", sql.Decimal(18, 2), maxPrice ? Number(maxPrice) : null)
+      .input("createdBy", sql.VarChar(100), updatedBy || "System")
+      .query(`
+        INSERT INTO PriceLogicMaster (
+          status,
+          stoneId,
+          stoneName,
+          basePrice,
+          minPrice,
+          maxPrice,
+          createdBy
+        )
+        VALUES (
+          @status,
+          @stoneId,
+          @stoneName,
+          @basePrice,
+          @minPrice,
+          @maxPrice,
+          @createdBy
+        )
+      `);
+
+    await transaction.commit();
+
+    return res.status(201).json({
+      success: true,
+      message: "Price Logic created successfully",
+    });
+  } catch (error) {
+    await transaction.rollback();
+
+    console.error("Price Logic Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create price logic",
+    });
+  }
+};
+
+export const getNextPriceLogicIdController = async (req, res) => {
+  try {
+    const pool = await getDbPool();
+
+    const result = await pool.request().query(`
+      SELECT ISNULL(MAX(id), 0) + 1 AS nextId
+      FROM PriceLogicMaster
+    `);
+
+    return res.status(200).json({
+      success: true,
+      nextId: result.recordset[0].nextId,
+    });
+  } catch (error) {
+    console.error("Get Next ID Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch next id",
+    });
+  }
+};
+
+export const listPriceLogicController = async (req, res) => {
+  try {
+    const pool = await getDbPool();
+
+    const page = Number(req.query.page) || 1;
+    const pageSize = Number(req.query.limit) || 10;
+    const search = req.query.search?.toString().trim() || "";
+
+    const offset = (page - 1) * pageSize;
+
+    const request = pool.request()
+      .input("search", sql.VarChar(100), `%${search}%`)
+      .input("offset", sql.Int, offset)
+      .input("pageSize", sql.Int, pageSize);
+    const countResult = await request.query(`
+      SELECT COUNT(*) AS total
+      FROM PriceLogicMaster
+      WHERE
+        stoneName LIKE @search
+        OR CAST(stoneId AS VARCHAR) LIKE @search
+    `);
+    const totalItems = countResult.recordset[0].total;
+    const totalPages = Math.ceil(totalItems / pageSize);
+
+    const dataResult = await request.query(`
+      SELECT
+        id,
+        status,
+        stoneId,
+        stoneName,
+        basePrice,
+        minPrice,
+        maxPrice,
+        createdBy,
+        createdOn
+      FROM PriceLogicMaster
+      WHERE
+        stoneName LIKE @search
+        OR CAST(stoneId AS VARCHAR) LIKE @search
+      ORDER BY id DESC
+      OFFSET @offset ROWS
+      FETCH NEXT @pageSize ROWS ONLY
+    `);
+    return res.status(200).json({
+      success: true,
+      data: dataResult.recordset,
+      pagination: {
+        currentPage: page,
+        pageSize,
+        totalItems,
+        totalPages,
+      },
+    });
+  } catch (error) {
+    console.error("List Price Logic Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch price logic list",
+    });
+  }
+};
+
+export const togglePriceLogicStatusController = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const pool = await getDbPool();
+
+    await pool
+      .request()
+      .input("id", sql.Int, Number(id))
+      .query(`
+        UPDATE PriceLogicMaster
+        SET status = CASE WHEN status = 1 THEN 0 ELSE 1 END
+        WHERE id = @id
+      `);
+
+    return res.json({
+      success: true,
+      message: "Status updated successfully",
+    });
+  } catch (err) {
+    console.error("Toggle Price Logic Status Error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update status",
+    });
+  }
+};
+
