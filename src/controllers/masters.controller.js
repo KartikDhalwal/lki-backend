@@ -643,7 +643,6 @@ export const getMasterOptions = async (req, res) => {
 };
 
 export const createPriceLogicController = async (req, res) => {
-  console.log(req.body, 'req.body')
   const pool = await getDbPool();
   const transaction = new sql.Transaction(pool);
 
@@ -667,9 +666,34 @@ export const createPriceLogicController = async (req, res) => {
     }
 
     await transaction.begin();
-
     const request = new sql.Request(transaction);
 
+    /* --------------------------------------------------
+       🔴 DUPLICATE ACTIVE CHECK
+       -------------------------------------------------- */
+    if (status === 1 || status === true) {
+      const existingActive = await request
+        .input("stoneId", sql.Int, Number(stone))
+        .query(`
+          SELECT TOP 1 id
+          FROM PriceLogicMaster
+          WHERE stoneId = @stoneId
+            AND status = 1
+        `);
+
+      if (existingActive.recordset.length > 0) {
+        await transaction.rollback();
+        return res.status(409).json({
+          success: false,
+          message:
+            "Active price logic already exists for this stone. Deactivate it before creating a new one.",
+        });
+      }
+    }
+
+    /* --------------------------------------------------
+       ✅ INSERT
+       -------------------------------------------------- */
     await request
       .input("status", sql.Bit, status ? 1 : 0)
       .input("stoneId", sql.Int, Number(stone))
@@ -707,7 +731,6 @@ export const createPriceLogicController = async (req, res) => {
     });
   } catch (error) {
     await transaction.rollback();
-
     console.error("Price Logic Error:", error);
 
     return res.status(500).json({
@@ -716,6 +739,7 @@ export const createPriceLogicController = async (req, res) => {
     });
   }
 };
+
 
 export const getNextPriceLogicIdController = async (req, res) => {
   try {
