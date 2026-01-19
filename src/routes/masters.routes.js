@@ -1,11 +1,12 @@
 import express from "express";
-import { addMasterOptionController, createPriceLogicController, getBrokersController, getBrokersMasterController, getMasterOptions, getNextPriceLogicIdController, getStoneController, getStoneMasterController, getToolsController, getToolsMasterController, listPriceLogicController, postBrokersController, postStoneController, postToolsController, togglePriceLogicStatusController } from "../controllers/masters.controller.js";
+import { addMasterOptionController, createPriceLogicController, exportStoneImportTemplateController, getBrokersController, getBrokersMasterController, getMasterOptions, getNextPriceLogicIdController, getStoneController, getStoneMasterController, getToolsController, getToolsMasterController, listPriceLogicController, postBrokersController, postStoneController, postToolsController, togglePriceLogicStatusController } from "../controllers/masters.controller.js";
 
 const router = express.Router();
 
 router.get("/stones", getStoneController);
 router.get("/master-stones", getStoneMasterController);
 router.post("/stones", postStoneController);
+router.get("/stones-import-template", exportStoneImportTemplateController);
 router.get("/tools", getToolsController);
 router.get("/master-tools", getToolsMasterController);
 router.post("/tools", postToolsController);

@@ -1,5 +1,6 @@
 import sql from "mssql";
 import { getDbPool } from "../utils/db.config.js";
+import ExcelJS from "exceljs"
 export const getStoneController = async (req, res) => {
   try {
     const page = parseInt(req.query.page || "1");
@@ -853,3 +854,111 @@ export const togglePriceLogicStatusController = async (req, res) => {
   }
 };
 
+export const exportStoneImportTemplateController = async (req, res) => {
+  try {
+    const pool = await getDbPool();
+
+    /* ---------------- Fetch master options ---------------- */
+    const result = await pool.request().query(`
+      SELECT master_type, master_name
+      FROM master_options
+      WHERE isActive = 1
+      ORDER BY master_type, master_name
+    `);
+
+    const grouped = {};
+    result.recordset.forEach(({ master_type: type, master_name: value }) => {
+      if (!grouped[type]) grouped[type] = [];
+      grouped[type].push(value);
+    });
+
+    const workbook = new ExcelJS.Workbook();
+
+    /* ---------------- Sheet 1: Import Template ---------------- */
+    const templateSheet = workbook.addWorksheet("Stone_Import_Template");
+
+    /** 🔹 Column definition WITH colour metadata */
+    const columns = [
+      { header: "stoneName", key: "stoneName", width: 25, colour: "yellow" },
+      { header: "family", key: "family", width: 20, colour: "red" },
+      { header: "category", key: "category", width: 15, colour: "red" },
+      { header: "size", key: "size", width: 15, colour: "yellow" },
+      { header: "shape", key: "shape", width: 20, colour: "red" },
+      { header: "grade", key: "grade", width: 20, colour: "red" },
+      { header: "colour", key: "colour", width: 20, colour: "red" },
+      { header: "minHeight", key: "minHeight", width: 15, colour: "yellow" },
+      { header: "maxHeight", key: "maxHeight", width: 15, colour: "yellow" },
+      { header: "mouType", key: "mouType", width: 15, colour: "red" },
+      { header: "cut", key: "cut", width: 25, colour: "red" },
+    ];
+
+    /** 🔹 Assign columns WITHOUT colour (exceljs-safe) */
+    templateSheet.columns = columns.map(({ colour, ...col }) => col);
+
+    /* ---------------- Header Styling ---------------- */
+    const COLOR_MAP = {
+      yellow: "FFFF00",
+      red: "FF4D4D",
+    };
+
+    const headerRow = templateSheet.getRow(1);
+
+    columns.forEach((col, index) => {
+      const cell = headerRow.getCell(index + 1);
+
+      if (col.colour) {
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: COLOR_MAP[col.colour] },
+        };
+      }
+
+      cell.font = { bold: true };
+      cell.alignment = { vertical: "middle", horizontal: "center" };
+      cell.border = {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      };
+    });
+
+    headerRow.commit();
+
+    /* ---------------- Sheet 2: Reference Data ---------------- */
+    const refSheet = workbook.addWorksheet("Reference_Data");
+
+    let colIndex = 1;
+    for (const type in grouped) {
+      refSheet.getCell(1, colIndex).value = type.toUpperCase();
+      refSheet.getCell(1, colIndex).font = { bold: true };
+
+      grouped[type].forEach((val, i) => {
+        refSheet.getCell(i + 2, colIndex).value = val;
+      });
+
+      refSheet.getColumn(colIndex).width = 25;
+      colIndex++;
+    }
+
+    /* ---------------- Response ---------------- */
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=Stone_Import_Template.xlsx"
+    );
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error("Excel Export Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate Excel template",
+    });
+  }
+};
