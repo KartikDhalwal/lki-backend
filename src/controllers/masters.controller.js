@@ -962,3 +962,168 @@ export const exportStoneImportTemplateController = async (req, res) => {
     });
   }
 };
+
+export const importStoneExcelController = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Excel file is required",
+      });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(req.file.buffer);
+
+    const sheet = workbook.getWorksheet("Stone_Import_Template");
+    if (!sheet) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid template",
+      });
+    }
+
+    const pool = await getDbPool();
+
+    // Load master options into memory
+    const masterRes = await pool.request().query(`
+  SELECT master_type, master_name
+  FROM master_options
+  WHERE isActive = 1
+`);
+
+
+    const masterMap = {};
+    masterRes.recordset.forEach(({ master_type, master_name }) => {
+      if (!masterMap[master_type]) masterMap[master_type] = new Set();
+      masterMap[master_type].add(master_name);
+    });
+
+
+    const errors = [];
+    let successCount = 0;
+
+    for (let i = 2; i <= sheet.rowCount; i++) {
+      const row = sheet.getRow(i);
+
+      const data = {
+        stoneName: row.getCell(1)?.value?.toString().trim(),
+        family: row.getCell(2)?.value,
+        category: row.getCell(3)?.value,
+        size: row.getCell(4)?.value,
+        shape: row.getCell(5)?.value,
+        grade: row.getCell(6)?.value,
+        colour: row.getCell(7)?.value,
+        minHeight: row.getCell(8)?.value,
+        maxHeight: row.getCell(9)?.value,
+        mouType: row.getCell(10)?.value,
+        cut: row.getCell(11)?.value,
+      };
+
+
+
+
+      if (!data.stoneName) {
+        errors.push(`Row ${i}: Stone Name is required`);
+        continue;
+      }
+      const sku = generateStoneCode(data);
+
+      const duplicate = await pool
+        .request()
+        .input("sku", sql.NVarChar, sku)
+        .query(`SELECT id FROM stone_master WHERE sku = @sku`);
+
+      if (duplicate.recordset.length) {
+        errors.push(`Row ${i}: Duplicate stone detected (${sku})`);
+        continue;
+      }
+
+
+
+      // Validate dropdown fields
+      const validations = [
+        ["family", data.family],
+        ["category", data.category],
+        ["shape", data.shape],
+        ["grade", data.grade],
+        ["colour", data.colour],
+        ["cut", data.cut],
+        ["mouType", data.mouType],
+      ];
+
+      const invalid = validations.find(
+        ([type, val]) => val && !masterMap[type]?.has(val)
+      );
+
+      if (invalid) {
+        errors.push(`Row ${i}: Invalid ${invalid[0]} value`);
+        continue;
+      }
+
+      try {
+        await pool
+          .request()
+          .input("sku", sql.NVarChar, sku)
+          .input("stone_name", sql.NVarChar, data.stoneName)
+          .input("family", sql.NVarChar, data.family || null)
+          .input("stone_type", sql.NVarChar, data.category || null)
+          .input("size", sql.NVarChar, data.size || null)
+          .input("shape", sql.NVarChar, data.shape || null)
+          .input("quality", sql.NVarChar, data.grade || null)
+          .input("colour", sql.NVarChar, data.colour || null)
+          .input("mou", sql.NVarChar, data.mou || null)
+          .input("grs", sql.NVarChar, data.certificate || null)
+          .input("min_height", sql.Int, data.minHeight || null)
+          .input("max_height", sql.Int, data.maxHeight || null)
+          .input("mou_type", sql.NVarChar, data.mouType || null)
+          .input("cut", sql.NVarChar, data.cut || null)
+          .query(`
+    INSERT INTO stone_master (
+      sku, stone_name, family, stone_type, size, shape,
+      quality, colour, mou, grs,
+      min_height, max_height, mou_type, cut
+    )
+    VALUES (
+      @sku, @stone_name, @family, @stone_type, @size, @shape,
+      @quality, @colour, @mou, @grs,
+      @min_height, @max_height, @mou_type, @cut
+    )
+  `);
+
+
+        successCount++;
+      } catch (err) {
+        errors.push(`Row ${i}: ${err.message}`);
+      }
+    }
+
+    res.json({
+      success: errors.length === 0,
+      inserted: successCount,
+      errors,
+    });
+  } catch (error) {
+    console.error("Excel Import Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to import Excel",
+    });
+  }
+};
+
+const generateStoneCode = (data) => {
+  const parts = [
+    data.stoneName,
+    data.family,
+    data.category,
+    data.size,
+    data.shape,
+    data.colour,
+  ];
+
+  return parts
+    .filter(Boolean)
+    .map((p) => p.toString().trim().toUpperCase().replace(/\s+/g, "-"))
+    .join("-");
+};
