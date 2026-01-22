@@ -888,3 +888,323 @@ export const getOrderStatsController = async (req, res) => {
     res.status(500).json({ message: "Failed to fetch stats" });
   }
 };
+
+export const receiveOrderItemController = async (req, res) => {
+  const pool = await getDbPool();
+  const transaction = new sql.Transaction(pool);
+
+  try {
+    const {
+      orderId,
+      type, // STONE | TOOL
+      itemId,
+      receivedBy,
+      receivedQty,
+      receivedWeight,
+      okQty,
+      okWeight,
+      rejectedQty,
+      rejectedWeight,
+      issue,
+      returnDate,
+      handoverTo,
+      status
+    } = req.body;
+
+    await transaction.begin();
+
+    /* ---------- Update Item ---------- */
+    const table = type === "STONE" ? "order_stones" : "order_tools";
+
+    await transaction.request()
+      .input("id", sql.Int, itemId)
+      .input("received_qty", sql.Int, receivedQty)
+      .input("received_weight", sql.Decimal(10,2), receivedWeight || null)
+      .input("ok_qty", sql.Int, okQty)
+      .input("ok_weight", sql.Decimal(10,2), okWeight || null)
+      .input("rejected_qty", sql.Int, rejectedQty)
+      .input("rejected_weight", sql.Decimal(10,2), rejectedWeight || null)
+      .input("issue", sql.NVarChar, issue || null)
+      .input("return_date", sql.Date, returnDate || null)
+      .input("handover_to", sql.NVarChar, handoverTo || null)
+      .input("status", sql.NVarChar, status)
+      .query(`
+        UPDATE ${table}
+        SET
+          received_qty = @received_qty,
+          received_weight = @received_weight,
+          ok_qty = @ok_qty,
+          ok_weight = @ok_weight,
+          rejected_qty = @rejected_qty,
+          rejected_weight = @rejected_weight,
+          issue = @issue,
+          return_date = @return_date,
+          handover_to = @handover_to,
+          receive_status = @status
+        WHERE id = @id
+      `);
+
+    /* ---------- Check Remaining Pending Items ---------- */
+    const pendingCheck = await transaction.request()
+      .input("orderId", sql.Int, orderId)
+      .query(`
+        SELECT
+          (
+            SELECT COUNT(*) FROM order_stones 
+            WHERE order_id = @orderId AND receive_status = 'Pending'
+          ) +
+          (
+            SELECT COUNT(*) FROM order_tools 
+            WHERE order_id = @orderId AND receive_status = 'Pending'
+          ) AS pendingCount
+      `);
+
+    const pendingCount = pendingCheck.recordset[0].pendingCount;
+
+    /* ---------- Update Order Status ---------- */
+    const orderStatus = pendingCount === 0 ? "Completed" : "Partial";
+
+    await transaction.request()
+      .input("orderId", sql.Int, orderId)
+      .input("status", sql.NVarChar, orderStatus)
+      .input("received_by", sql.Int, receivedBy)
+      .query(`
+        UPDATE orders
+        SET
+          received_status = @status,
+          received_at = GETDATE(),
+          received_by = @received_by
+        WHERE id = @orderId
+      `);
+
+    await transaction.commit();
+
+    res.json({
+      success: true,
+      message:
+        pendingCount === 0
+          ? "Order fully received"
+          : "Item received successfully",
+      orderStatus
+    });
+
+  } catch (err) {
+    await transaction.rollback();
+    console.error("Receive Item Error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to receive item"
+    });
+  }
+};
+
+export const receiveOrderViewController = async (req, res) => {
+  const pool = await getDbPool();
+
+  try {
+    const { orderId } = req.params;
+    const page = Number(req.query.page || 1);
+    const pageSize = Number(req.query.pageSize || 10);
+    const offset = (page - 1) * pageSize;
+
+    /* ---------- Order Header ---------- */
+    const orderResult = await pool.request()
+      .input("orderId", sql.Int, orderId)
+      .query(`
+        SELECT 
+          o.id,
+          o.order_no,
+          o.total_quantity,
+          o.delivery_date,
+          o.received_status,
+          b.brokerName
+        FROM orders o
+        LEFT JOIN brokers b ON b.id = o.broker_id
+        WHERE o.id = @orderId
+      `);
+
+    if (!orderResult.recordset.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found"
+      });
+    }
+
+    const order = orderResult.recordset[0];
+
+    /* ---------- Items (Stone + Tool UNION) ---------- */
+    const itemsResult = await pool.request()
+      .input("orderId", sql.Int, orderId)
+      .input("offset", sql.Int, offset)
+      .input("pageSize", sql.Int, pageSize)
+      .query(`
+        SELECT * FROM (
+          SELECT 
+            os.id,
+            os.order_id,
+            'STONE' AS type,
+            s.code,
+            s.stoneName AS name,
+            os.size,
+            os.received_weight AS weight,
+            os.quantity AS orderedQty,
+            os.receive_status
+          FROM order_stones os
+          JOIN stones s ON s.id = os.stone_id
+          WHERE os.order_id = @orderId
+
+          UNION ALL
+
+          SELECT
+            ot.id,
+            ot.order_id,
+            'TOOL' AS type,
+            t.toolCode AS code,
+            t.toolName AS name,
+            NULL AS size,
+            NULL AS weight,
+            ot.quantity AS orderedQty,
+            ot.receive_status
+          FROM order_tools ot
+          JOIN tools t ON t.id = ot.tool_id
+          WHERE ot.order_id = @orderId
+        ) X
+        ORDER BY type
+        OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+      `);
+
+    /* ---------- Total Count ---------- */
+    const countResult = await pool.request()
+      .input("orderId", sql.Int, orderId)
+      .query(`
+        SELECT
+          (
+            SELECT COUNT(*) FROM order_stones WHERE order_id = @orderId
+          ) +
+          (
+            SELECT COUNT(*) FROM order_tools WHERE order_id = @orderId
+          ) AS total
+      `);
+
+    res.json({
+      success: true,
+      order: {
+        id: order.id,
+        orderNo: order.order_no,
+        brokerName: order.brokerName,
+        totalQuantity: order.total_quantity,
+        deliveryDate: order.delivery_date,
+        receivedStatus: order.received_status
+      },
+      items: itemsResult.recordset.map((r) => ({
+        id: r.id,
+        orderId: r.order_id,
+        type: r.type,
+        code: r.code,
+        name: r.name,
+        size: r.size,
+        weight: r.weight,
+        orderedQty: r.orderedQty,
+        receiveStatus: r.receive_status
+      })),
+      total: countResult.recordset[0].total
+    });
+
+  } catch (err) {
+    console.error("Receive View Error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load receive view"
+    });
+  }
+};
+
+export const listOrdersReceiveController = async (req, res) => {
+  const pool = await getDbPool();
+
+  try {
+    const page = Number(req.query.page || 1);
+    const pageSize = Number(req.query.pageSize || 10);
+    const search = req.query.search || "";
+    const status = req.query.status || null;
+    const receivedStatus = req.query.receivedStatus || null;
+
+    const offset = (page - 1) * pageSize;
+
+    /* ---------- WHERE Conditions ---------- */
+    let where = `WHERE 1=1`;
+    if (search) {
+      where += ` AND (o.order_no LIKE @search OR b.brokerName LIKE @search)`;
+    }
+    if (status) {
+      where += ` AND o.status = @status`;
+    }
+    if (receivedStatus) {
+      where += ` AND o.received_status = @receivedStatus`;
+    }
+
+    /* ---------- Orders Query ---------- */
+    const ordersResult = await pool.request()
+      .input("search", sql.NVarChar, `%${search}%`)
+      .input("status", sql.NVarChar, status)
+      .input("receivedStatus", sql.NVarChar, receivedStatus)
+      .input("offset", sql.Int, offset)
+      .input("pageSize", sql.Int, pageSize)
+      .query(`
+        SELECT
+          o.id,
+          o.order_no,
+          o.category,
+          o.total_quantity,
+          o.delivery_date,
+          o.status,
+          o.received_status,
+          o.createdAt,
+          b.brokerName
+        FROM orders o
+        LEFT JOIN brokers b ON b.id = o.broker_id
+        ${where}
+        ORDER BY o.createdAt DESC
+        OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+      `);
+
+    /* ---------- Count Query ---------- */
+    const countResult = await pool.request()
+      .input("search", sql.NVarChar, `%${search}%`)
+      .input("status", sql.NVarChar, status)
+      .input("receivedStatus", sql.NVarChar, receivedStatus)
+      .query(`
+        SELECT COUNT(*) AS total
+        FROM orders o
+        LEFT JOIN brokers b ON b.id = o.broker_id
+        ${where}
+      `);
+
+    res.json({
+      success: true,
+      data: ordersResult.recordset.map((o) => ({
+        id: o.id,
+        orderNo: o.order_no,
+        category: o.category,
+        brokerName: o.brokerName,
+        totalQuantity: o.total_quantity,
+        deliveryDate: o.delivery_date,
+        status: o.status,
+        receivedStatus: o.received_status,
+        createdAt: o.createdAt
+      })),
+      pagination: {
+        page,
+        pageSize,
+        total: countResult.recordset[0].total
+      }
+    });
+
+  } catch (err) {
+    console.error("Orders Listing Error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch orders"
+    });
+  }
+};

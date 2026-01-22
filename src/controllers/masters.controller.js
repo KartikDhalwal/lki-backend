@@ -128,8 +128,10 @@ export const postStoneController = async (req, res) => {
       minHeight,
       maxHeight,
       mouType,
-      cut
+      cut,
     } = req.body;
+
+    const imageFileName = req.file ? req.file.filename : null;
 
     if (!code || !stoneName) {
       return res.status(400).json({
@@ -170,6 +172,7 @@ export const postStoneController = async (req, res) => {
       .input("max_height", sql.Int, maxHeight || null)
       .input("mou_type", sql.NVarChar, mouType || null)
       .input("cut", sql.NVarChar, cut || null)
+      .input("image", sql.NVarChar, imageFileName) 
       .query(`
         INSERT INTO stone_master (
           sku,
@@ -185,7 +188,8 @@ export const postStoneController = async (req, res) => {
           min_height,
           max_height,
           mou_type,
-          cut
+          cut,
+          image
         )
         VALUES (
           @sku,
@@ -201,7 +205,8 @@ export const postStoneController = async (req, res) => {
           @min_height,
           @max_height,
           @mou_type,
-          @cut
+          @cut,
+          @image
         )
       `);
 
@@ -217,6 +222,7 @@ export const postStoneController = async (req, res) => {
     });
   }
 };
+
 
 
 export const getToolsController = async (req, res) => {
