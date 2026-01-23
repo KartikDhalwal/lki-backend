@@ -889,8 +889,6 @@ export const getOrderStatsController = async (req, res) => {
   }
 };
 
-
-
 export const receiveOrderViewController = async (req, res) => {
   const pool = await getDbPool();
 
@@ -1013,7 +1011,6 @@ export const receiveOrderViewController = async (req, res) => {
     });
   }
 };
-
 
 export const listOrdersReceiveController = async (req, res) => {
   const pool = await getDbPool();
@@ -1259,6 +1256,213 @@ export const receiveOrderItemController = async (req, res) => {
     res.status(500).json({
       success: false,
       message: err.message || "Failed to receive item",
+    });
+  }
+};
+
+export const listOrdersReceiveReviewController = async (req, res) => {
+  const pool = await getDbPool();
+
+  try {
+    const page = Number(req.query.page || 1);
+    const pageSize = Number(req.query.pageSize || 10);
+    const offset = (page - 1) * pageSize;
+
+    const result = await pool.request()
+      .input("offset", sql.Int, offset)
+      .input("pageSize", sql.Int, pageSize)
+      .query(`
+        SELECT
+          o.id,
+          o.order_no,
+          o.total_quantity,
+          o.received_status,
+          o.receive_review_status,
+          o.created_at
+        FROM orders o
+        WHERE o.received_status IN ('Partial','Completed')
+          AND o.receive_review_status = 'Pending'
+        ORDER BY o.created_at DESC
+        OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+      `);
+
+    const count = await pool.request().query(`
+      SELECT COUNT(*) AS total
+      FROM orders
+      WHERE received_status IN ('Partial','Completed')
+        AND receive_review_status = 'Pending'
+    `);
+
+    res.json({
+      success: true,
+      data: result.recordset,
+      pagination: {
+        page,
+        pageSize,
+        total: count.recordset[0].total,
+      },
+    });
+
+  } catch (err) {
+    console.error("Receive Review List Error", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load receive review orders",
+    });
+  }
+};
+
+export const receiveReviewViewController = async (req, res) => {
+  const pool = await getDbPool();
+  const { orderId } = req.params;
+
+  try {
+    const order = await pool.request()
+      .input("orderId", sql.Int, orderId)
+      .query(`
+        SELECT
+          id,
+          order_no,
+          total_quantity,
+          received_status,
+          receive_review_status
+        FROM orders
+        WHERE id = @orderId
+      `);
+
+    const items = await pool.request()
+      .input("orderId", sql.Int, orderId)
+      .query(`
+        SELECT * FROM (
+          SELECT
+            os.id,
+            'STONE' AS type,
+            os.stone_name AS name,
+            os.received_qty,
+            os.ok_qty,
+            os.rejected_qty,
+            os.receive_status,
+            os.receive_review_status,
+            os.receive_review_comment
+          FROM order_stones os
+          WHERE os.order_id = @orderId
+            AND os.receive_status <> 'Pending'
+
+          UNION ALL
+
+          SELECT
+            ot.id,
+            'TOOL' AS type,
+            t.tool_name AS name,
+            ot.received_qty,
+            ot.ok_qty,
+            ot.rejected_qty,
+            ot.receive_status,
+            ot.receive_review_status,
+            ot.receive_review_comment
+          FROM order_tools ot
+          JOIN tool_master t ON t.id = ot.tool_id
+          WHERE ot.order_id = @orderId
+            AND ot.receive_status <> 'Pending'
+        ) X
+        ORDER BY type
+      `);
+
+    res.json({
+      success: true,
+      order: order.recordset[0],
+      items: items.recordset,
+    });
+
+  } catch (err) {
+    console.error("Receive Review View Error", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load receive review view",
+    });
+  }
+};
+
+export const receiveReviewItemController = async (req, res) => {
+  const pool = await getDbPool();
+  const transaction = new sql.Transaction(pool);
+
+  try {
+    const {
+      orderId,
+      itemId,
+      type,                 // STONE | TOOL
+      reviewStatus,         // Approved | Rejected
+      reviewComment,
+      reviewerId,
+    } = req.body;
+
+    await transaction.begin();
+
+    const table =
+      type === "STONE" ? "order_stones" :
+      type === "TOOL"  ? "order_tools"  :
+      null;
+
+    if (!table) throw new Error("Invalid item type");
+
+    await transaction.request()
+      .input("id", sql.Int, itemId)
+      .input("status", sql.NVarChar, reviewStatus)
+      .input("comment", sql.NVarChar, reviewComment || null)
+      .input("reviewer", sql.Int, reviewerId)
+      .query(`
+        UPDATE ${table}
+        SET
+          receive_review_status = @status,
+          receive_review_comment = @comment,
+          receive_reviewed_at = GETDATE(),
+          receive_reviewed_by = @reviewer
+        WHERE id = @id
+      `);
+
+    /* ---------- Check if all received items reviewed ---------- */
+    const pending = await transaction.request()
+      .input("orderId", sql.Int, orderId)
+      .query(`
+        SELECT
+          (
+            SELECT COUNT(*) FROM order_stones
+            WHERE order_id = @orderId
+              AND receive_status <> 'Pending'
+              AND receive_review_status = 'Pending'
+          ) +
+          (
+            SELECT COUNT(*) FROM order_tools
+            WHERE order_id = @orderId
+              AND receive_status <> 'Pending'
+              AND receive_review_status = 'Pending'
+          ) AS pending
+      `);
+
+    if (pending.recordset[0].pending === 0) {
+      await transaction.request()
+        .input("orderId", sql.Int, orderId)
+        .query(`
+          UPDATE orders
+          SET receive_review_status = 'Completed'
+          WHERE id = @orderId
+        `);
+    }
+
+    await transaction.commit();
+
+    res.json({
+      success: true,
+      message: "Receive review saved successfully",
+    });
+
+  } catch (err) {
+    await transaction.rollback();
+    console.error("Receive Review Save Error", err);
+    res.status(500).json({
+      success: false,
+      message: err.message || "Failed to save receive review",
     });
   }
 };
