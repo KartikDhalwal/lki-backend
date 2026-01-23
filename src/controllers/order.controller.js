@@ -889,114 +889,7 @@ export const getOrderStatsController = async (req, res) => {
   }
 };
 
-export const receiveOrderItemController = async (req, res) => {
-  const pool = await getDbPool();
-  const transaction = new sql.Transaction(pool);
 
-  try {
-    const {
-      orderId,
-      type, // STONE | TOOL
-      itemId,
-      receivedBy,
-      receivedQty,
-      receivedWeight,
-      okQty,
-      okWeight,
-      rejectedQty,
-      rejectedWeight,
-      issue,
-      returnDate,
-      handoverTo,
-      status
-    } = req.body;
-
-    await transaction.begin();
-
-    /* ---------- Update Item ---------- */
-    const table = type === "STONE" ? "order_stones" : "order_tools";
-
-    await transaction.request()
-      .input("id", sql.Int, itemId)
-      .input("received_qty", sql.Int, receivedQty)
-      .input("received_weight", sql.Decimal(10,2), receivedWeight || null)
-      .input("ok_qty", sql.Int, okQty)
-      .input("ok_weight", sql.Decimal(10,2), okWeight || null)
-      .input("rejected_qty", sql.Int, rejectedQty)
-      .input("rejected_weight", sql.Decimal(10,2), rejectedWeight || null)
-      .input("issue", sql.NVarChar, issue || null)
-      .input("return_date", sql.Date, returnDate || null)
-      .input("handover_to", sql.NVarChar, handoverTo || null)
-      .input("status", sql.NVarChar, status)
-      .query(`
-        UPDATE ${table}
-        SET
-          received_qty = @received_qty,
-          received_weight = @received_weight,
-          ok_qty = @ok_qty,
-          ok_weight = @ok_weight,
-          rejected_qty = @rejected_qty,
-          rejected_weight = @rejected_weight,
-          issue = @issue,
-          return_date = @return_date,
-          handover_to = @handover_to,
-          receive_status = @status
-        WHERE id = @id
-      `);
-
-    /* ---------- Check Remaining Pending Items ---------- */
-    const pendingCheck = await transaction.request()
-      .input("orderId", sql.Int, orderId)
-      .query(`
-        SELECT
-          (
-            SELECT COUNT(*) FROM order_stones 
-            WHERE order_id = @orderId AND receive_status = 'Pending'
-          ) +
-          (
-            SELECT COUNT(*) FROM order_tools 
-            WHERE order_id = @orderId AND receive_status = 'Pending'
-          ) AS pendingCount
-      `);
-
-    const pendingCount = pendingCheck.recordset[0].pendingCount;
-
-    /* ---------- Update Order Status ---------- */
-    const orderStatus = pendingCount === 0 ? "Completed" : "Partial";
-
-    await transaction.request()
-      .input("orderId", sql.Int, orderId)
-      .input("status", sql.NVarChar, orderStatus)
-      .input("received_by", sql.Int, receivedBy)
-      .query(`
-        UPDATE orders
-        SET
-          received_status = @status,
-          received_at = GETDATE(),
-          received_by = @received_by
-        WHERE id = @orderId
-      `);
-
-    await transaction.commit();
-
-    res.json({
-      success: true,
-      message:
-        pendingCount === 0
-          ? "Order fully received"
-          : "Item received successfully",
-      orderStatus
-    });
-
-  } catch (err) {
-    await transaction.rollback();
-    console.error("Receive Item Error:", err);
-    res.status(500).json({
-      success: false,
-      message: "Failed to receive item"
-    });
-  }
-};
 
 export const receiveOrderViewController = async (req, res) => {
   const pool = await getDbPool();
@@ -1017,16 +910,16 @@ export const receiveOrderViewController = async (req, res) => {
           o.total_quantity,
           o.delivery_date,
           o.received_status,
-          b.brokerName
+          b.broker_name AS brokerName
         FROM orders o
-        LEFT JOIN brokers b ON b.id = o.broker_id
+        LEFT JOIN broker_master b ON b.id = o.broker_id
         WHERE o.id = @orderId
       `);
 
     if (!orderResult.recordset.length) {
       return res.status(404).json({
         success: false,
-        message: "Order not found"
+        message: "Order not found",
       });
     }
 
@@ -1039,34 +932,36 @@ export const receiveOrderViewController = async (req, res) => {
       .input("pageSize", sql.Int, pageSize)
       .query(`
         SELECT * FROM (
+          /* -------- Stones -------- */
           SELECT 
             os.id,
             os.order_id,
             'STONE' AS type,
-            s.code,
-            s.stoneName AS name,
+            s.sku AS code,
+            s.stone_name AS name,
             os.size,
             os.received_weight AS weight,
             os.quantity AS orderedQty,
             os.receive_status
           FROM order_stones os
-          JOIN stones s ON s.id = os.stone_id
+          JOIN stone_master s ON s.id = os.stone_id
           WHERE os.order_id = @orderId
 
           UNION ALL
 
+          /* -------- Tools -------- */
           SELECT
             ot.id,
             ot.order_id,
             'TOOL' AS type,
-            t.toolCode AS code,
-            t.toolName AS name,
+            CAST(t.id AS NVARCHAR) AS code,
+            t.tool_name AS name,
             NULL AS size,
             NULL AS weight,
             ot.quantity AS orderedQty,
             ot.receive_status
           FROM order_tools ot
-          JOIN tools t ON t.id = ot.tool_id
+          JOIN tool_master t ON t.id = ot.tool_id
           WHERE ot.order_id = @orderId
         ) X
         ORDER BY type
@@ -1094,7 +989,7 @@ export const receiveOrderViewController = async (req, res) => {
         brokerName: order.brokerName,
         totalQuantity: order.total_quantity,
         deliveryDate: order.delivery_date,
-        receivedStatus: order.received_status
+        receivedStatus: order.received_status,
       },
       items: itemsResult.recordset.map((r) => ({
         id: r.id,
@@ -1105,19 +1000,20 @@ export const receiveOrderViewController = async (req, res) => {
         size: r.size,
         weight: r.weight,
         orderedQty: r.orderedQty,
-        receiveStatus: r.receive_status
+        receiveStatus: r.receive_status,
       })),
-      total: countResult.recordset[0].total
+      total: countResult.recordset[0].total,
     });
 
   } catch (err) {
     console.error("Receive View Error:", err);
     res.status(500).json({
       success: false,
-      message: "Failed to load receive view"
+      message: "Failed to load receive view",
     });
   }
 };
+
 
 export const listOrdersReceiveController = async (req, res) => {
   const pool = await getDbPool();
@@ -1131,19 +1027,28 @@ export const listOrdersReceiveController = async (req, res) => {
 
     const offset = (page - 1) * pageSize;
 
-    /* ---------- WHERE Conditions ---------- */
+    /* ---------- WHERE CONDITIONS ---------- */
     let where = `WHERE 1=1`;
+
+    // 🔍 Search
     if (search) {
       where += ` AND (o.order_no LIKE @search OR b.brokerName LIKE @search)`;
     }
+
+    // 📦 Order status (CREATED / APPROVED etc.)
     if (status) {
       where += ` AND o.status = @status`;
     }
+
+    // 📥 Receive status (Pending / Partial / Completed)
     if (receivedStatus) {
       where += ` AND o.received_status = @receivedStatus`;
+    } else {
+      // ✅ Default: show only orders that still need receiving
+      where += ` AND o.received_status IN ('REVIEW')`;
     }
 
-    /* ---------- Orders Query ---------- */
+    /* ---------- DATA QUERY ---------- */
     const ordersResult = await pool.request()
       .input("search", sql.NVarChar, `%${search}%`)
       .input("status", sql.NVarChar, status)
@@ -1159,16 +1064,16 @@ export const listOrdersReceiveController = async (req, res) => {
           o.delivery_date,
           o.status,
           o.received_status,
-          o.createdAt,
-          b.brokerName
+          o.created_at,
+          b.broker_name
         FROM orders o
-        LEFT JOIN brokers b ON b.id = o.broker_id
+        LEFT JOIN broker_master b ON b.id = o.broker_id
         ${where}
-        ORDER BY o.createdAt DESC
+        ORDER BY o.created_at DESC
         OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
       `);
 
-    /* ---------- Count Query ---------- */
+    /* ---------- COUNT QUERY ---------- */
     const countResult = await pool.request()
       .input("search", sql.NVarChar, `%${search}%`)
       .input("status", sql.NVarChar, status)
@@ -1176,7 +1081,7 @@ export const listOrdersReceiveController = async (req, res) => {
       .query(`
         SELECT COUNT(*) AS total
         FROM orders o
-        LEFT JOIN brokers b ON b.id = o.broker_id
+        LEFT JOIN broker_master b ON b.id = o.broker_id
         ${where}
       `);
 
@@ -1191,7 +1096,7 @@ export const listOrdersReceiveController = async (req, res) => {
         deliveryDate: o.delivery_date,
         status: o.status,
         receivedStatus: o.received_status,
-        createdAt: o.createdAt
+        createdAt: o.created_at
       })),
       pagination: {
         page,
@@ -1201,10 +1106,159 @@ export const listOrdersReceiveController = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Orders Listing Error:", err);
+    console.error("Orders Receive Listing Error:", err);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch orders"
+      message: "Failed to fetch receive orders"
+    });
+  }
+};
+
+export const receiveOrderItemController = async (req, res) => {
+  const pool = await getDbPool();
+  const transaction = new sql.Transaction(pool);
+
+  try {
+    const {
+      orderId,
+      type,        // STONE | TOOL
+      itemId,
+
+      receivedQty,
+      receivedWeight,
+      okQty,
+      okWeight,
+      rejectedQty,
+      rejectedWeight,
+
+      issue,
+      returnDate,
+      handoverTo,
+      status,      // Approved | Rejected | Partial
+    } = req.body;
+
+    if (!orderId || !itemId || !type) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields",
+      });
+    }
+
+    await transaction.begin();
+
+    /* ------------------------------------------------
+       1️⃣ UPDATE ITEM (STONE / TOOL)
+    ------------------------------------------------ */
+
+    const tableName =
+      type === "STONE" ? "order_stones" :
+      type === "TOOL"  ? "order_tools"  :
+      null;
+
+    if (!tableName) {
+      throw new Error("Invalid item type");
+    }
+
+    // 🔒 Prevent double receive
+    const existing = await transaction.request()
+      .input("id", sql.Int, itemId)
+      .query(`
+        SELECT receive_status
+        FROM ${tableName}
+        WHERE id = @id
+      `);
+
+    if (
+      existing.recordset.length &&
+      existing.recordset[0].receive_status !== "Pending"
+    ) {
+      throw new Error("Item already received");
+    }
+
+    await transaction.request()
+      .input("id", sql.Int, itemId)
+      .input("received_qty", sql.Int, Number(receivedQty))
+      .input("received_weight", sql.Decimal(10, 2), receivedWeight || null)
+      .input("ok_qty", sql.Int, okQty)
+      .input("ok_weight", sql.Decimal(10, 2), okWeight || null)
+      .input("rejected_qty", sql.Int, Number(rejectedQty))
+      .input("rejected_weight", sql.Decimal(10, 2), rejectedWeight || null)
+      .input("issue", sql.NVarChar, issue || null)
+      .input("return_date", sql.Date, returnDate || null)
+      .input("handover_to", sql.NVarChar, handoverTo || null)
+      .input("status", sql.NVarChar, status)
+      .query(`
+        UPDATE ${tableName}
+        SET
+          received_qty = @received_qty,
+          received_weight = @received_weight,
+          ok_qty = @ok_qty,
+          ok_weight = @ok_weight,
+          rejected_qty = @rejected_qty,
+          rejected_weight = @rejected_weight,
+          issue = @issue,
+          return_date = @return_date,
+          handover_to = @handover_to,
+          receive_status = @status
+        WHERE id = @id
+      `);
+
+    /* ------------------------------------------------
+       2️⃣ CHECK IF ALL ITEMS RECEIVED
+    ------------------------------------------------ */
+
+    const pendingResult = await transaction.request()
+      .input("orderId", sql.Int, orderId)
+      .query(`
+        SELECT
+          (
+            SELECT COUNT(*) FROM order_stones 
+            WHERE order_id = @orderId AND receive_status = 'Pending'
+          ) +
+          (
+            SELECT COUNT(*) FROM order_tools
+            WHERE order_id = @orderId AND receive_status = 'Pending'
+          ) AS pendingCount
+      `);
+
+    const pendingCount = pendingResult.recordset[0].pendingCount;
+
+    /* ------------------------------------------------
+       3️⃣ UPDATE ORDER RECEIVE STATUS
+    ------------------------------------------------ */
+
+    const orderStatus =
+      pendingCount === 0 ? "Completed" : "Partial";
+
+    await transaction.request()
+      .input("orderId", sql.Int, orderId)
+      .input("status", sql.NVarChar, orderStatus)
+      .query(`
+        UPDATE orders
+        SET
+          received_status = @status,
+          received_at = GETDATE()
+        WHERE id = @orderId
+      `);
+
+    await transaction.commit();
+
+    res.json({
+      success: true,
+      message:
+        pendingCount === 0
+          ? "Order fully received"
+          : "Item received successfully",
+      orderStatus,
+    });
+
+  } catch (err) {
+    await transaction.rollback();
+    console.error("Receive Item Error:", err);
+
+    res.status(500).json({
+      success: false,
+      message: err.message || "Failed to receive item",
     });
   }
 };
