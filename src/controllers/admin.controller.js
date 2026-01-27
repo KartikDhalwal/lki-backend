@@ -158,3 +158,144 @@ export const getAdminDashboardController = async (req, res) => {
     });
   }
 };
+
+
+export const getOperatorDashboardController = async (req, res) => {
+  try {
+    const pool = await getDbPool();
+    const { operatorId } = req.query;
+
+    const request = pool.request();
+    if (operatorId) {
+      request.input("operatorId", sql.Int, operatorId);
+    }
+
+    const statsQuery = `
+      SELECT
+  COUNT(DISTINCT id) AS totalOrders,
+  SUM(CASE WHEN status = 'REVIEW' AND isReviewed != 1 THEN 1 ELSE 0 END) AS sentForReview,
+  SUM(CASE WHEN received_status IS NULL THEN 1 ELSE 0 END) AS pendingOrders,
+  SUM(CASE WHEN received_status IS NOT NULL THEN 1 ELSE 0 END) AS completedOrders
+FROM orders 
+`;
+
+    const stats = (await request.query(statsQuery)).recordset[0];
+    console.log(stats,'stats')
+
+    const receivedChartQuery = `
+      SELECT
+        DATENAME(MONTH, o.created_at) AS label,
+        COUNT(*) AS count
+      FROM orders o
+      WHERE o.created_at >= DATEADD(MONTH, -7, GETDATE())
+      GROUP BY DATENAME(MONTH, o.created_at), MONTH(o.created_at)
+      ORDER BY MONTH(o.created_at)
+    `;
+
+    const receivedChart = (await request.query(receivedChartQuery)).recordset;
+
+
+    const reviewStatusQuery = `
+SELECT
+  SUM(CASE WHEN receive_review_status IS NULL THEN 1 ELSE 0 END) AS received,
+  SUM(CASE WHEN receive_review_status = 'Pending' THEN 1 ELSE 0 END) AS sentForReview,
+  SUM(CASE WHEN receive_review_status = 'Approved' THEN 1 ELSE 0 END) AS completed
+FROM order_stones;
+ `;
+
+    const reviewStatus = (await request.query(reviewStatusQuery)).recordset[0];
+
+//     const timelineQuery = `
+// SELECT
+//   SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS ordered,
+//   SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS inTransit,
+//   SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) AS received,
+//   SUM(CASE WHEN status = 3 THEN 1 ELSE 0 END) AS sentForReview,
+//   SUM(CASE WHEN status = 4 THEN 1 ELSE 0 END) AS completed
+// FROM orders;
+
+//     `;
+
+//     const timeline = (await request.query(timelineQuery)).recordset[0];
+
+    const assignedOrdersQuery = `
+SELECT TOP 10
+  o.order_no AS id,
+  b.broker_name AS broker,
+  FORMAT(o.delivery_date, 'dd MMM yyyy') AS date,
+  CONCAT(o.total_quantity, ' Pcs') AS qty,
+  CASE
+    WHEN o.delivery_date < CAST(GETDATE() AS DATE) THEN 'Delayed'
+    WHEN o.delivery_date = CAST(GETDATE() AS DATE) THEN 'Due Today'
+    ELSE 'On Time'
+  END AS sla
+FROM orders o
+LEFT JOIN broker_master b ON b.id = o.broker_id
+WHERE o.status IN ('REVIEW')
+ORDER BY o.created_at DESC;
+
+    `;
+
+    const assignedOrders = (await request.query(assignedOrdersQuery)).recordset;
+
+    const recentActivityQuery = `
+SELECT TOP 10
+  o.order_no AS id,
+  CASE
+    WHEN os.receive_review_status = 'Approved' THEN 'Reviewed'
+    WHEN os.receive_review_status = 'Pending' THEN 'Sent for Review'
+    ELSE 'Updated'
+  END AS type,
+  FORMAT(os.receive_reviewed_at, 'dd MMM yyyy') AS date,
+  FORMAT(os.receive_reviewed_at, 'hh:mm tt') AS time,
+  CASE
+    WHEN os.receive_review_status = 'Approved' THEN 'Success'
+    ELSE 'Pending'
+  END AS status
+FROM order_stones os
+INNER JOIN orders o ON o.id = os.order_id
+WHERE os.receive_reviewed_at IS NOT NULL
+ORDER BY os.receive_reviewed_at DESC;
+ `;
+
+    const recentActivity = (await request.query(recentActivityQuery)).recordset;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        stats,
+        receivedChart,
+        reviewStatus,
+        // timeline,
+        assignedOrders,
+        recentActivity,
+      },
+    });
+  } catch (error) {
+    console.error("Operator Dashboard Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load operator dashboard",
+    });
+  }
+};
+
+export const ORDER_STATUS = {
+  ORDERED: 0,
+  IN_TRANSIT: 1,
+  RECEIVED: 2,
+  SENT_FOR_REVIEW: 3,
+  COMPLETED: 4,
+};
+
+export const RECEIVE_STATUS = {
+  NOT_RECEIVED: 0,
+  RECEIVED: 1,
+  RETURNED: 2,
+};
+
+export const RECEIVE_REVIEW_STATUS = {
+  PENDING: 0,
+  SENT_FOR_REVIEW: 1,
+  REVIEW_COMPLETED: 2,
+};
