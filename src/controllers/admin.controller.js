@@ -1,5 +1,6 @@
 import { getDbPool } from "../utils/db.config.js";
 import sql from "mssql";
+import bcrypt from "bcryptjs";
 
 export const getAdminDashboardController = async (req, res) => {
   try {
@@ -180,7 +181,7 @@ FROM orders
 `;
 
     const stats = (await request.query(statsQuery)).recordset[0];
-    console.log(stats,'stats')
+    console.log(stats, 'stats')
 
     const receivedChartQuery = `
       SELECT
@@ -205,18 +206,18 @@ FROM order_stones;
 
     const reviewStatus = (await request.query(reviewStatusQuery)).recordset[0];
 
-//     const timelineQuery = `
-// SELECT
-//   SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS ordered,
-//   SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS inTransit,
-//   SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) AS received,
-//   SUM(CASE WHEN status = 3 THEN 1 ELSE 0 END) AS sentForReview,
-//   SUM(CASE WHEN status = 4 THEN 1 ELSE 0 END) AS completed
-// FROM orders;
+    //     const timelineQuery = `
+    // SELECT
+    //   SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS ordered,
+    //   SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS inTransit,
+    //   SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) AS received,
+    //   SUM(CASE WHEN status = 3 THEN 1 ELSE 0 END) AS sentForReview,
+    //   SUM(CASE WHEN status = 4 THEN 1 ELSE 0 END) AS completed
+    // FROM orders;
 
-//     `;
+    //     `;
 
-//     const timeline = (await request.query(timelineQuery)).recordset[0];
+    //     const timeline = (await request.query(timelineQuery)).recordset[0];
 
     const assignedOrdersQuery = `
 SELECT TOP 10
@@ -298,4 +299,161 @@ export const RECEIVE_REVIEW_STATUS = {
   PENDING: 0,
   SENT_FOR_REVIEW: 1,
   REVIEW_COMPLETED: 2,
+};
+
+
+export const getUsersController = async (req, res) => {
+  try {
+    const pool = await getDbPool();
+
+    const result = await pool.request().query(`
+      SELECT 
+        id,
+        username AS name,
+        email,
+        mobileNumber,
+        role,
+        CASE WHEN isActive = 1 THEN 'Active' ELSE 'Inactive' END AS status,
+        createdAt AS createdOn
+      FROM Users
+      ORDER BY createdAt DESC
+    `);
+
+    res.status(200).json(result.recordset);
+  } catch (error) {
+    console.error("Get Users Error:", error);
+    res.status(500).json({ message: "Failed to fetch users" });
+  }
+};
+
+export const createUserController = async (req, res) => {
+  try {
+    const { name, email, mobileNumber, password, role } = req.body;
+
+    if (!name || !email || !mobileNumber || !password || !role) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const pool = await getDbPool();
+    // Check duplicate email
+    const existing = await pool.request()
+      .input("email", sql.NVarChar, email)
+      .query("SELECT id FROM Users WHERE email = @email");
+
+    if (existing.recordset.length > 0) {
+      return res.status(409).json({ message: "Email already exists" });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    await pool.request()
+      .input("username", sql.NVarChar, name)
+      .input("email", sql.NVarChar, email)
+      .input("mobileNumber", sql.NVarChar, mobileNumber)
+      .input("passwordHash", sql.NVarChar, passwordHash)
+      .input("role", sql.NVarChar, role)
+      .input("isActive", sql.Bit, 1)
+      .query(`
+        INSERT INTO Users
+        (username, email, mobileNumber, passwordHash, role, isActive, createdAt)
+        VALUES
+        (@username, @email, @mobileNumber, @passwordHash, @role, @isActive, GETDATE())
+      `);
+
+    res.status(201).json({ message: "User created successfully" });
+  } catch (error) {
+    console.error("Create User Error:", error);
+    res.status(500).json({ message: "Failed to create user" });
+  }
+};
+
+export const updateUserController = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, email, mobileNumber, role } = req.body;
+
+    if (!name || !email || !mobileNumber || !role) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const pool = await getDbPool();
+
+    // Check email uniqueness (exclude current user)
+    const existing = await pool.request()
+      .input("email", sql.NVarChar, email)
+      .input("id", sql.Int, id)
+      .query(`
+        SELECT id FROM Users 
+        WHERE email = @email AND id <> @id
+      `);
+
+    if (existing.recordset.length > 0) {
+      return res.status(409).json({ message: "Email already exists" });
+    }
+
+    await pool.request()
+      .input("id", sql.Int, id)
+      .input("username", sql.NVarChar, name)
+      .input("email", sql.NVarChar, email)
+      .input("mobileNumber", sql.NVarChar, mobileNumber)
+      .input("role", sql.NVarChar, role)
+      .query(`
+        UPDATE Users SET
+          username = @username,
+          email = @email,
+          mobileNumber = @mobileNumber,
+          role = @role,
+          updatedAt = GETDATE()
+        WHERE id = @id
+      `);
+
+    res.json({ message: "User updated successfully" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Failed to update user" });
+  }
+};
+
+export const toggleUserStatusController = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body;
+
+    const pool = await getDbPool();
+
+    await pool.request()
+      .input("id", sql.Int, id)
+      .input("isActive", sql.Bit, isActive)
+      .query(`
+        UPDATE Users SET
+          isActive = @isActive,
+          updatedAt = GETDATE()
+        WHERE id = @id
+      `);
+
+    res.json({ message: "User status updated" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Failed to update status" });
+  }
+};
+
+export const getUserStatsController = async (req, res) => {
+  try {
+    const pool = await getDbPool();
+
+    const result = await pool.request().query(`
+      SELECT
+        COUNT(*) AS totalUsers,
+        SUM(CASE WHEN isActive = 1 THEN 1 ELSE 0 END) AS activeUsers,
+        SUM(CASE WHEN isActive = 0 THEN 1 ELSE 0 END) AS inactiveUsers,
+        COUNT(DISTINCT role) AS rolesCount
+      FROM Users
+    `);
+
+    res.json(result.recordset[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Failed to fetch user stats" });
+  }
 };
