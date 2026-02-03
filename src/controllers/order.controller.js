@@ -58,6 +58,7 @@ export const postOrderController = async (req, res) => {
         orderHeader.deliveryDate || null
       )
       .input("total_quantity", sql.Int, totalQuantity)
+      .input("createdBy", sql.NVarChar, orderHeader.createdBy || null)
       .query(`
         INSERT INTO orders (
           order_no,
@@ -70,7 +71,8 @@ export const postOrderController = async (req, res) => {
           secondary_contact_message,
           instructions,
           delivery_date,
-          total_quantity
+          total_quantity,
+          createdBy
         )
         OUTPUT INSERTED.id
         VALUES (
@@ -84,7 +86,8 @@ export const postOrderController = async (req, res) => {
           @secondary_contact_message,
           @instructions,
           @delivery_date,
-          @total_quantity
+          @total_quantity,
+          @createdBy
         )
       `);
 
@@ -218,6 +221,7 @@ export const postOrderController = async (req, res) => {
 
 export const listOrdersController = async (req, res) => {
   try {
+    const createdBy = req.query.createdBy;
     const page = parseInt(req.query.page || "1");
     const limit = parseInt(req.query.limit || "10");
     const search = req.query.search || null;
@@ -262,7 +266,7 @@ export const listOrdersController = async (req, res) => {
 
           WHERE
             (@search IS NULL OR o.order_no LIKE '%' + @search + '%')
-
+            AND o.createdBy = '${createdBy}'
           GROUP BY
             o.id, o.order_no, o.status, o.created_at, o.delivery_date,o.isReviewed
         )
@@ -295,6 +299,7 @@ export const listOrdersController = async (req, res) => {
         FROM orders o
         WHERE
           (@search IS NULL OR o.order_no LIKE '%' + @search + '%')
+            AND o.createdBy = '${createdBy}'
       `);
 
     const totalItems = countResult.recordset[0].total;
@@ -451,7 +456,7 @@ export const listOrdersReviewerController = async (req, res) => {
           WHERE
           o.status = 'REVIEW' AND 
             (@search IS NULL OR o.order_no LIKE '%' + @search + '%')
-
+            AND o.createdBy != 'ADMIN'
           GROUP BY
             o.id, o.order_no, o.status, o.created_at, o.delivery_date,o.isReviewed
         )
@@ -878,6 +883,8 @@ export const getOrderStatsController = async (req, res) => {
         SUM(CASE WHEN status = 'REVIEW' AND ISNULL(isReviewed,0) <> 1 THEN 1 ELSE 0 END) AS pendingReview,
         SUM(CASE WHEN isReviewed = 1 THEN 1 ELSE 0 END) AS reviewedOrders
       FROM orders
+      WHERE
+        createdBy != 'ADMIN'
     `);
 
     res.json({
@@ -1066,6 +1073,7 @@ export const listOrdersReceiveController = async (req, res) => {
         FROM orders o
         LEFT JOIN broker_master b ON b.id = o.broker_id
         ${where}
+        AND o.createdBy != 'ADMIN'
         ORDER BY o.created_at DESC
         OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
       `);
@@ -1080,6 +1088,7 @@ export const listOrdersReceiveController = async (req, res) => {
         FROM orders o
         LEFT JOIN broker_master b ON b.id = o.broker_id
         ${where}
+        AND o.createdBy != 'ADMIN'
       `);
 
     res.json({
@@ -1282,6 +1291,7 @@ export const listOrdersReceiveReviewController = async (req, res) => {
         FROM orders o
         WHERE o.received_status IN ('Partial','Completed')
           AND o.receive_review_status = 'Pending'
+        AND o.createdBy != 'ADMIN'
         ORDER BY o.created_at DESC
         OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
       `);
@@ -1291,6 +1301,7 @@ export const listOrdersReceiveReviewController = async (req, res) => {
       FROM orders
       WHERE received_status IN ('Partial','Completed')
         AND receive_review_status = 'Pending'
+        AND createdBy != 'ADMIN'
     `);
 
     res.json({

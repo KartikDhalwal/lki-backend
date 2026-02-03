@@ -177,7 +177,7 @@ export const getOperatorDashboardController = async (req, res) => {
   SUM(CASE WHEN status = 'REVIEW' AND isReviewed != 1 THEN 1 ELSE 0 END) AS sentForReview,
   SUM(CASE WHEN received_status IS NULL THEN 1 ELSE 0 END) AS pendingOrders,
   SUM(CASE WHEN received_status IS NOT NULL THEN 1 ELSE 0 END) AS completedOrders
-FROM orders 
+FROM orders WHERE createdBy != 'ADMIN'
 `;
 
     const stats = (await request.query(statsQuery)).recordset[0];
@@ -188,7 +188,7 @@ FROM orders
         DATENAME(MONTH, o.created_at) AS label,
         COUNT(*) AS count
       FROM orders o
-      WHERE o.created_at >= DATEADD(MONTH, -7, GETDATE())
+      WHERE o.created_at >= DATEADD(MONTH, -7, GETDATE()) AND o.createdBy != 'ADMIN'
       GROUP BY DATENAME(MONTH, o.created_at), MONTH(o.created_at)
       ORDER BY MONTH(o.created_at)
     `;
@@ -232,7 +232,7 @@ SELECT TOP 10
   END AS sla
 FROM orders o
 LEFT JOIN broker_master b ON b.id = o.broker_id
-WHERE o.status IN ('REVIEW')
+WHERE o.status IN ('REVIEW') AND o.createdBy != 'ADMIN'
 ORDER BY o.created_at DESC;
 
     `;
