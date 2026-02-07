@@ -31,7 +31,8 @@ export const getStoneController = async (req, res) => {
           min_height AS minHeight,
           max_height AS maxHeight,
           mou_type AS mouType,
-          cut
+          cut,
+          isActive
         FROM stone_master
         WHERE
           (@search IS NULL
@@ -97,7 +98,7 @@ export const getStoneMasterController = async (req, res) => {
           max_height AS maxHeight,
           mou_type AS mouType,
           cut
-        FROM stone_master
+        FROM stone_master 
       `);
 
     res.json({
@@ -172,7 +173,7 @@ export const postStoneController = async (req, res) => {
       .input("max_height", sql.Int, maxHeight || null)
       .input("mou_type", sql.NVarChar, mouType || null)
       .input("cut", sql.NVarChar, cut || null)
-      .input("image", sql.NVarChar, imageFileName) 
+      .input("image", sql.NVarChar, imageFileName)
       .query(`
         INSERT INTO stone_master (
           sku,
@@ -248,7 +249,8 @@ export const getToolsController = async (req, res) => {
           comments,
           notes,
           mou,
-          category
+          category,
+          isActive
         FROM tool_master
         WHERE
           (@search IS NULL
@@ -411,7 +413,8 @@ export const getBrokersController = async (req, res) => {
           phone_number AS phoneNumber,
           city,
           gst_number AS gstNumber,
-          status
+          status,
+          isActive
         FROM broker_master
         WHERE
           (@search IS NULL OR broker_code LIKE '%' + @search + '%'
@@ -656,55 +659,90 @@ export const createPriceLogicController = async (req, res) => {
   try {
     const {
       status,
+      applicabilityType, // "stone" | "tool"
       stone,
       stoneName,
+      tool,
+      toolName,
       basePrice,
       minPrice,
       maxPrice,
       updatedBy,
     } = req.body;
 
-    // 🔒 Basic validation
-    if (!stone || !basePrice) {
-      return res.status(400).json({
-        success: false,
-        message: "Required fields are missing",
-      });
+    if (!basePrice) {
+      return res.status(400).json({ success: false, message: "Base price is required" });
+    }
+
+    if (applicabilityType === "stone" && !stone) {
+      return res.status(400).json({ success: false, message: "Stone is required" });
+    }
+
+    if (applicabilityType === "tool" && !tool) {
+      return res.status(400).json({ success: false, message: "Tool is required" });
     }
 
     await transaction.begin();
-    const request = new sql.Request(transaction);
 
     /* --------------------------------------------------
-       🔴 DUPLICATE ACTIVE CHECK
+       🔴 DUPLICATE ACTIVE CHECK (use a fresh Request)
        -------------------------------------------------- */
     if (status === 1 || status === true) {
-      const existingActive = await request
-        .input("stoneId", sql.Int, Number(stone))
-        .query(`
-          SELECT TOP 1 id
-          FROM PriceLogicMaster
-          WHERE stoneId = @stoneId
-            AND status = 1
-        `);
+      if (applicabilityType === "stone") {
+        const checkReq = new sql.Request(transaction);
+        const existingActive = await checkReq
+          .input("stoneId", sql.Int, Number(stone))
+          .query(`
+            SELECT TOP 1 id
+            FROM PriceLogicMaster
+            WHERE stoneId = @stoneId
+              AND status = 1
+              AND applicabilityType = 'stone'
+          `);
 
-      if (existingActive.recordset.length > 0) {
-        await transaction.rollback();
-        return res.status(409).json({
-          success: false,
-          message:
-            "Active price logic already exists for this stone. Deactivate it before creating a new one.",
-        });
+        if (existingActive.recordset.length > 0) {
+          await transaction.rollback();
+          return res.status(409).json({
+            success: false,
+            message: "Active price logic already exists for this stone.",
+          });
+        }
+      }
+
+      if (applicabilityType === "tool") {
+        const checkReq = new sql.Request(transaction);
+        const existingActive = await checkReq
+          .input("toolId", sql.Int, Number(tool))
+          .query(`
+            SELECT TOP 1 id
+            FROM PriceLogicMaster
+            WHERE toolId = @toolId
+              AND status = 1
+              AND applicabilityType = 'tool'
+          `);
+
+        if (existingActive.recordset.length > 0) {
+          await transaction.rollback();
+          return res.status(409).json({
+            success: false,
+            message: "Active price logic already exists for this tool.",
+          });
+        }
       }
     }
 
     /* --------------------------------------------------
-       ✅ INSERT
+       ✅ INSERT (use another fresh Request)
        -------------------------------------------------- */
-    await request
+    const insertReq = new sql.Request(transaction);
+
+    await insertReq
       .input("status", sql.Bit, status ? 1 : 0)
-      .input("stoneId", sql.Int, Number(stone))
-      .input("stoneName", sql.VarChar(100), stoneName)
+      .input("applicabilityType", sql.VarChar(20), applicabilityType)
+      .input("stoneId", sql.Int, applicabilityType === "stone" ? Number(stone) : null)
+      .input("stoneName", sql.VarChar(100), applicabilityType === "stone" ? stoneName : null)
+      .input("toolId", sql.Int, applicabilityType === "tool" ? Number(tool) : null)
+      .input("toolName", sql.VarChar(100), applicabilityType === "tool" ? toolName : null)
       .input("basePrice", sql.Decimal(18, 2), Number(basePrice))
       .input("minPrice", sql.Decimal(18, 2), minPrice ? Number(minPrice) : null)
       .input("maxPrice", sql.Decimal(18, 2), maxPrice ? Number(maxPrice) : null)
@@ -712,8 +750,11 @@ export const createPriceLogicController = async (req, res) => {
       .query(`
         INSERT INTO PriceLogicMaster (
           status,
+          applicabilityType,
           stoneId,
           stoneName,
+          toolId,
+          toolName,
           basePrice,
           minPrice,
           maxPrice,
@@ -721,8 +762,11 @@ export const createPriceLogicController = async (req, res) => {
         )
         VALUES (
           @status,
+          @applicabilityType,
           @stoneId,
           @stoneName,
+          @toolId,
+          @toolName,
           @basePrice,
           @minPrice,
           @maxPrice,
@@ -739,13 +783,11 @@ export const createPriceLogicController = async (req, res) => {
   } catch (error) {
     await transaction.rollback();
     console.error("Price Logic Error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to create price logic",
-    });
+    return res.status(500).json({ success: false, message: "Failed to create price logic" });
   }
 };
+
+
 
 
 export const getNextPriceLogicIdController = async (req, res) => {
@@ -784,22 +826,32 @@ export const listPriceLogicController = async (req, res) => {
       .input("search", sql.VarChar(100), `%${search}%`)
       .input("offset", sql.Int, offset)
       .input("pageSize", sql.Int, pageSize);
+
+    /* ---------- Count ---------- */
     const countResult = await request.query(`
       SELECT COUNT(*) AS total
       FROM PriceLogicMaster
       WHERE
-        stoneName LIKE @search
+        (@search = '%%')
+        OR stoneName LIKE @search
+        OR toolName LIKE @search
         OR CAST(stoneId AS VARCHAR) LIKE @search
+        OR CAST(toolId AS VARCHAR) LIKE @search
     `);
+
     const totalItems = countResult.recordset[0].total;
     const totalPages = Math.ceil(totalItems / pageSize);
 
+    /* ---------- Data ---------- */
     const dataResult = await request.query(`
       SELECT
         id,
         status,
+        applicabilityType,
         stoneId,
         stoneName,
+        toolId,
+        toolName,
         basePrice,
         minPrice,
         maxPrice,
@@ -807,12 +859,16 @@ export const listPriceLogicController = async (req, res) => {
         createdOn
       FROM PriceLogicMaster
       WHERE
-        stoneName LIKE @search
+        (@search = '%%')
+        OR stoneName LIKE @search
+        OR toolName LIKE @search
         OR CAST(stoneId AS VARCHAR) LIKE @search
+        OR CAST(toolId AS VARCHAR) LIKE @search
       ORDER BY id DESC
       OFFSET @offset ROWS
       FETCH NEXT @pageSize ROWS ONLY
     `);
+
     return res.status(200).json({
       success: true,
       data: dataResult.recordset,
@@ -831,6 +887,7 @@ export const listPriceLogicController = async (req, res) => {
     });
   }
 };
+
 
 export const togglePriceLogicStatusController = async (req, res) => {
   try {
@@ -1132,4 +1189,51 @@ const generateStoneCode = (data) => {
     .filter(Boolean)
     .map((p) => p.toString().trim().toUpperCase().replace(/\s+/g, "-"))
     .join("-");
+};
+
+// controllers/master.controller.ts
+export const toggleMasterStatusController = async (req, res) => {
+  try {
+    const { type, id } = req.params;
+    const { isActive } = req.body;
+
+    const tableMap = {
+      stone: "stone_master",
+      tool: "tool_master",
+      broker: "broker_master",
+    };
+
+    const table = tableMap[type];
+
+    if (!table) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid master type",
+      });
+    }
+
+    const pool = await getDbPool();
+
+    await pool
+      .request()
+      .input("id", sql.Int, id)
+      .input("isActive", sql.Bit, isActive ? 1 : 0)
+      .query(`
+        UPDATE ${table}
+        SET isActive = @isActive,
+            updated_at = GETDATE()
+        WHERE id = @id
+      `);
+
+    res.json({
+      success: true,
+      message: "Status updated successfully",
+    });
+  } catch (error) {
+    console.error("Toggle Status Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update status",
+    });
+  }
 };

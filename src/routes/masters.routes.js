@@ -1,5 +1,5 @@
 import express from "express";
-import { addMasterOptionController, createPriceLogicController, exportStoneImportTemplateController, getBrokersController, getBrokersMasterController, getMasterOptions, getNextPriceLogicIdController, getStoneController, getStoneMasterController, getToolsController, getToolsMasterController, importStoneExcelController, listPriceLogicController, postBrokersController, postStoneController, postToolsController, togglePriceLogicStatusController } from "../controllers/masters.controller.js";
+import { addMasterOptionController, createPriceLogicController, exportStoneImportTemplateController, getBrokersController, getBrokersMasterController, getMasterOptions, getNextPriceLogicIdController, getStoneController, getStoneMasterController, getToolsController, getToolsMasterController, importStoneExcelController, listPriceLogicController, postBrokersController, postStoneController, postToolsController, toggleMasterStatusController, togglePriceLogicStatusController } from "../controllers/masters.controller.js";
 import multer from "multer";
 import { uploadStoneImage } from "../middlewares/uploadStoneImage.js";
 
@@ -29,6 +29,7 @@ router.post("/price-logic", createPriceLogicController);
 router.get("/price-logic/next-id", getNextPriceLogicIdController);
 router.patch("/price-logic/:id/status", togglePriceLogicStatusController);
 router.get("/:type", getMasterOptions);
+router.patch("/:type/:id/status", toggleMasterStatusController);
 
 
 export default router;
