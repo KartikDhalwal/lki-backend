@@ -414,7 +414,8 @@ export const getBrokersController = async (req, res) => {
           city,
           gst_number AS gstNumber,
           status,
-          isActive
+          isActive,
+          companyName
         FROM broker_master
         WHERE
           (@search IS NULL OR broker_code LIKE '%' + @search + '%'
@@ -490,6 +491,7 @@ export const postBrokersController = async (req, res) => {
       status,
       bankAcNo,
       bankName,
+      companyName
     } = req.body;
 
     if (!brokerName) {
@@ -525,11 +527,12 @@ export const postBrokersController = async (req, res) => {
       .input("status", sql.NVarChar, status || "Active")
       .input("bankAcNo", sql.NVarChar, bankAcNo)
       .input("bankName", sql.NVarChar, bankName)
+      .input("companyName", sql.NVarChar, companyName)
       .query(`
         INSERT INTO broker_master
-        (broker_name, phone_number, alternate_number, city, gst_number, address, status,bankAcNo,bankName)
+        (broker_name, phone_number, alternate_number, city, gst_number, address, status,bankAcNo,bankName,companyName)
         VALUES
-        (@broker_name, @phone_number, @alternate_number, @city, @gst_number, @address, @status,@bankAcNo,@bankName)
+        (@broker_name, @phone_number, @alternate_number, @city, @gst_number, @address, @status,@bankAcNo,@bankName,@companyName)
       `);
 
     res.status(201).json({ success: true });
