@@ -676,12 +676,13 @@ export const getOrderByIdOperatorController = async (req, res) => {
     const stones = await pool.request()
       .input("id", sql.Int, id)
       .query(`SELECT 
-  os.*,
+  os.*,sm.stone_name AS StoneName,
   b.broker_name,
   m.broker_name AS manufacturer_name
 FROM order_stones os
 LEFT JOIN broker_master b ON b.id = os.broker_id
 LEFT JOIN broker_master m ON m.id = os.manufacturer_id
+LEFT JOIN stone_master sm ON sm.id = os.stone_id
 WHERE os.order_id = @id
 `);
 
