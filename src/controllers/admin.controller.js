@@ -1,6 +1,7 @@
 import { getDbPool } from "../utils/db.config.js";
 import sql from "mssql";
 import bcrypt from "bcryptjs";
+import ExcelJS from "exceljs"
 
 export const getAdminDashboardController = async (req, res) => {
   try {
@@ -455,5 +456,88 @@ export const getUserStatsController = async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Failed to fetch user stats" });
+  }
+};
+
+export const exportStoneMasterExcelController = async (req, res) => {
+  try {
+    const pool = await getDbPool();
+
+    const result = await pool.request().query(`
+      SELECT 
+        id,
+        sku,
+        stone_name,
+        family,
+        stone_type,
+        size,
+        shape,
+        quality,
+        colour,
+        min_height,
+        max_height,
+        mou_type,
+        cut,
+        created_at
+      FROM stone_master
+      ORDER BY id DESC
+    `);
+
+    const rows = result.recordset;
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Stone Master");
+
+    worksheet.columns = [
+      { header: "ID", key: "id", width: 10 },
+      { header: "SKU", key: "sku", width: 20 },
+      { header: "Stone Name", key: "stone_name", width: 25 },
+      { header: "Family", key: "family", width: 20 },
+      { header: "Stone Type", key: "stone_type", width: 20 },
+      { header: "Size", key: "size", width: 15 },
+      { header: "Shape", key: "shape", width: 15 },
+      { header: "Quality", key: "quality", width: 15 },
+      { header: "Colour", key: "colour", width: 15 },
+      { header: "Min Height", key: "min_height", width: 12 },
+      { header: "Max Height", key: "max_height", width: 12 },
+      { header: "MOU Type", key: "mou_type", width: 12 },
+      { header: "Cut", key: "cut", width: 15 },
+      { header: "Created At", key: "created_at", width: 20 }
+    ];
+
+    // Add rows
+    rows.forEach((row) => {
+      worksheet.addRow({
+        ...row,
+        created_at: row.created_at
+          ? new Date(row.created_at).toLocaleString("en-GB")
+          : "",
+        updated_at: row.updated_at
+          ? new Date(row.updated_at).toLocaleString("en-GB")
+          : "",
+      });
+    });
+
+    // Header Styling
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.views = [{ state: "frozen", ySplit: 1 }];
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=stone_master_${Date.now()}.xlsx`
+    );
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error("Excel export failed:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to export Stone Master Excel",
+    });
   }
 };

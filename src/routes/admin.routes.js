@@ -1,8 +1,8 @@
 import express from "express";
-import { createUserController, getAdminDashboardController, getOperatorDashboardController, getUsersController, getUserStatsController, toggleUserStatusController, updateUserController } from "../controllers/admin.controller.js";
+import { createUserController, exportStoneMasterExcelController, getAdminDashboardController, getOperatorDashboardController, getUsersController, getUserStatsController, toggleUserStatusController, updateUserController } from "../controllers/admin.controller.js";
 
 const router = express.Router();
-
+router.get("/stones-export", exportStoneMasterExcelController);
 router.get("/dashboard", getAdminDashboardController);
 router.get("/operator/dashboard", getOperatorDashboardController);
 router.get("/users", getUsersController);

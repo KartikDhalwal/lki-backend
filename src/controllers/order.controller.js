@@ -868,7 +868,7 @@ export const updateOrderController = async (req, res) => {
     });
   } catch (err) {
     await transaction.rollback();
-    console.log({err})
+    console.log({ err })
     res.status(500).json({ message: err });
   }
 };
@@ -1159,8 +1159,8 @@ export const receiveOrderItemController = async (req, res) => {
 
     const tableName =
       type === "STONE" ? "order_stones" :
-      type === "TOOL"  ? "order_tools"  :
-      null;
+        type === "TOOL" ? "order_tools" :
+          null;
 
     if (!tableName) {
       throw new Error("Invalid item type");
@@ -1413,8 +1413,8 @@ export const receiveReviewItemController = async (req, res) => {
 
     const table =
       type === "STONE" ? "order_stones" :
-      type === "TOOL"  ? "order_tools"  :
-      null;
+        type === "TOOL" ? "order_tools" :
+          null;
 
     if (!table) throw new Error("Invalid item type");
 
