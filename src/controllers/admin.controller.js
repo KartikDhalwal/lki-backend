@@ -480,7 +480,7 @@ export const exportStoneMasterExcelController = async (req, res) => {
         cut,
         created_at
       FROM stone_master
-      ORDER BY id DESC
+      ORDER BY stone_name ASC
     `);
 
     const rows = result.recordset;

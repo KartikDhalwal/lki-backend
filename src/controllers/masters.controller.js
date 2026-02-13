@@ -39,7 +39,7 @@ export const getStoneController = async (req, res) => {
             OR sku LIKE '%' + @search + '%'
             OR stone_name LIKE '%' + @search + '%'
           )
-        ORDER BY id DESC
+        ORDER BY stoneName ASC
         OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
       `);
 
@@ -99,6 +99,7 @@ export const getStoneMasterController = async (req, res) => {
           mou_type AS mouType,
           cut
         FROM stone_master 
+        ORDER BY stoneName ASC
       `);
 
     res.json({
@@ -155,7 +156,16 @@ export const postStoneController = async (req, res) => {
         message: "Stone code already exists",
       });
     }
+    const minHeightVal = minHeight ? parseFloat(minHeight) : null;
+    const maxHeightVal = maxHeight ? parseFloat(maxHeight) : null;
 
+    if (minHeightVal !== null && isNaN(minHeightVal)) {
+      return res.status(400).json({ success: false, message: "Invalid min height" });
+    }
+
+    if (maxHeightVal !== null && isNaN(maxHeightVal)) {
+      return res.status(400).json({ success: false, message: "Invalid max height" });
+    }
     /* ---- Insert Stone ---- */
     await pool
       .request()
@@ -169,8 +179,8 @@ export const postStoneController = async (req, res) => {
       .input("colour", sql.NVarChar, colour || null)
       .input("mou", sql.NVarChar, mou || null)
       .input("grs", sql.NVarChar, certificate || null)
-      .input("min_height", sql.Int, minHeight || null)
-      .input("max_height", sql.Int, maxHeight || null)
+      .input("min_height", sql.Decimal(10, 2), minHeight ? Number(minHeight) : null)
+      .input("max_height", sql.Decimal(10, 2), maxHeight ? Number(maxHeight) : null)
       .input("mou_type", sql.NVarChar, mouType || null)
       .input("cut", sql.NVarChar, cut || null)
       .input("image", sql.NVarChar, imageFileName)
