@@ -1,7 +1,14 @@
 import sql from "mssql";
 import { getDbPool } from "../utils/db.config.js";
 import { SendWhatsAppMessgae } from "../utils/whatsApp.js";
-
+const statusMain = {
+  0:'Draft',
+  1:'Sent For Review',
+  2:'Reviewer Approved',
+  3:'Order Recieved By Operator',
+  5:'Recieved Order Reviewed by Reviewer',
+  99:'Admin Order'
+}
 export const postOrderController = async (req, res) => {
   const pool = await getDbPool();
   const transaction = new sql.Transaction(pool);
@@ -128,6 +135,7 @@ export const postOrderController = async (req, res) => {
         )
         .input("comments", sql.NVarChar, stone.comments || null)
         .input("supply_date", sql.DateTime, stone.supplyDate || null)
+        .input("statusMain", sql.Int, status === 'DRAFT' ? 0 : status === 'REVIEW' ? 1 : 99 || null)
         .query(`
           INSERT INTO order_stones (
             order_id,
@@ -146,7 +154,8 @@ export const postOrderController = async (req, res) => {
             max_height,
             length_of_string,
             comments,
-            supply_date
+            supply_date,
+            statusMain
           )
           VALUES (
             @order_id,
@@ -165,7 +174,8 @@ export const postOrderController = async (req, res) => {
             @max_height,
             @length_of_string,
             @comments,
-            @supply_date
+            @supply_date,
+            @statusMain
           )
         `);
     }
@@ -186,6 +196,7 @@ export const postOrderController = async (req, res) => {
           tool.supplyDate || null
         )
         .input("comments", sql.NVarChar, tool.comments || null)
+        .input("statusMain", sql.Int, status === 'DRAFT' ? 0 : status === 'REVIEW' ? 1 : 99 || null)
         .query(`
           INSERT INTO order_tools (
             order_id,
@@ -196,7 +207,8 @@ export const postOrderController = async (req, res) => {
             usage,
             guage_size,
             supply_date,
-            comments
+            comments,
+            statusMain
           )
           VALUES (
             @order_id,
@@ -207,7 +219,8 @@ export const postOrderController = async (req, res) => {
             @usage,
             @guage_size,
             @supply_date,
-            @comments
+            @comments,
+            @statusMain
           )
         `);
     }
@@ -576,7 +589,7 @@ export const reviewOrderPricingController = async (req, res) => {
       base_price,
       final_price,
       discount,
-      discount_reason,
+      discount_reason
     } = req.body;
 
     if (!order_id || !item_id || !item_type) {
@@ -604,7 +617,7 @@ export const reviewOrderPricingController = async (req, res) => {
       .input("final_price", sql.Decimal(18, 2), final_price)
       .input("discount", sql.Decimal(5, 2), discount || null)
       .input("discount_reason", sql.VarChar(255), discount_reason || null)
-      .input("reviewed_at", sql.DateTime, new Date());
+      .input("reviewed_at", sql.DateTime, new Date())
 
     /* ---------------------------------------------------
        1️⃣ Update reviewed item
@@ -621,7 +634,8 @@ export const reviewOrderPricingController = async (req, res) => {
           reviewed_discount = @discount,
           reviewed_discount_reason = @discount_reason,
           reviewed_at = @reviewed_at,
-          isReviewed = 1
+          isReviewed = 1,
+          statusMain = 2
         WHERE id = @item_id
           AND order_id = @order_id
           AND ISNULL(isReviewed, 0) = 0
@@ -635,7 +649,8 @@ export const reviewOrderPricingController = async (req, res) => {
           reviewed_discount = @discount,
           reviewed_discount_reason = @discount_reason,
           reviewed_at = @reviewed_at,
-          isReviewed = 1
+          isReviewed = 1,
+          statusMain = 2
         WHERE id = @item_id
           AND order_id = @order_id
           AND ISNULL(isReviewed, 0) = 0
@@ -830,6 +845,7 @@ export const updateOrderController = async (req, res) => {
         .input("length_of_string", sql.Int, s.lengthOfString || null)
         .input("comments", sql.NVarChar, s.comments || null)
         .input("supply_date", sql.Date, s.supplyDate || null)
+        .input("statusMain", sql.Int, status === 'DRAFT' ? 0 : status === 'REVIEW' ? 1 : 99 || null)
         .query(`
          INSERT INTO order_stones (
             order_id,
@@ -848,7 +864,8 @@ export const updateOrderController = async (req, res) => {
             max_height,
             length_of_string,
             comments,
-            supply_date
+            supply_date,
+            statusMain
           )
           VALUES (
             @order_id,
@@ -867,7 +884,8 @@ export const updateOrderController = async (req, res) => {
             @max_height,
             @length_of_string,
             @comments,
-            @supply_date
+            @supply_date,
+            @statusMain
           )
         `);
     }
@@ -883,6 +901,7 @@ export const updateOrderController = async (req, res) => {
         .input("guage_size", sql.NVarChar, t.guageSize || null)
         .input("supply_date", sql.Date, t.supplyDate || null)
         .input("comments", sql.NVarChar, t.comments || null)
+        .input("statusMain", sql.Int, status === 'DRAFT' ? 0 : status === 'REVIEW' ? 1 : 99 || null)
         .query(`
          INSERT INTO order_tools (
             order_id,
@@ -893,7 +912,8 @@ export const updateOrderController = async (req, res) => {
             usage,
             guage_size,
             supply_date,
-            comments
+            comments,
+            statusMain
           )
           VALUES (
             @order_id,
@@ -904,7 +924,8 @@ export const updateOrderController = async (req, res) => {
             @usage,
             @guage_size,
             @supply_date,
-            @comments
+            @comments,
+            @statusMain
           )
         `);
     }
