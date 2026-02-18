@@ -1,5 +1,6 @@
 import sql from "mssql";
 import { getDbPool } from "../utils/db.config.js";
+import { SendWhatsAppMessgae } from "../utils/whatsApp.js";
 
 export const postOrderController = async (req, res) => {
   const pool = await getDbPool();
@@ -94,6 +95,16 @@ export const postOrderController = async (req, res) => {
     const orderId = orderResult.recordset[0].id;
 
     for (const stone of stones) {
+      const minHeightVal = stone?.minHeight ? parseFloat(stone?.minHeight) : null;
+      const maxHeightVal = stone?.maxHeight ? parseFloat(stone?.maxHeight) : null;
+
+      if (minHeightVal !== null && isNaN(minHeightVal)) {
+        return res.status(400).json({ success: false, message: "Invalid min height" });
+      }
+
+      if (maxHeightVal !== null && isNaN(maxHeightVal)) {
+        return res.status(400).json({ success: false, message: "Invalid max height" });
+      }
       await transaction
         .request()
         .input("order_id", sql.Int, orderId)
@@ -108,8 +119,8 @@ export const postOrderController = async (req, res) => {
         .input("color", sql.NVarChar, stone.color || null)
         .input("family", sql.NVarChar, stone.family || null)
         .input("cut", sql.NVarChar, stone.cut || null)
-        .input("min_height", sql.Int, stone.minHeight || null)
-        .input("max_height", sql.Int, stone.maxHeight || null)
+        .input("min_height", sql.Decimal(10, 2), stone?.minHeight ? Number(stone?.minHeight) : null)
+        .input("max_height", sql.Decimal(10, 2), stone?.maxHeight ? Number(stone?.maxHeight) : null)
         .input(
           "length_of_string",
           sql.Int,
@@ -203,16 +214,57 @@ export const postOrderController = async (req, res) => {
 
     await transaction.commit();
 
+    // 🔔 Notify each broker separately
+    const brokersResult = await pool
+      .request()
+      .input("order_id", sql.Int, orderId)
+      .query(`
+    SELECT DISTINCT 
+        os.broker_id,
+        bm.phone_number,
+        bm.broker_name
+    FROM order_stones os
+    JOIN broker_master bm ON bm.id = os.broker_id
+    WHERE os.order_id = @order_id
+      AND os.broker_id IS NOT NULL
+      AND bm.phone_number IS NOT NULL
+  `);
+
+    // for (const broker of brokersResult.recordset) {
+    //   SendWhatsAppMessgae(
+    //     broker.phone_number,
+    //     "broker_creation_msg",
+    //     [
+    //       { type: "text", text: broker.broker_name },
+    //       { type: "text", text: orderHeader.deliveryDate },
+    //       { type: "text", text: 'www.lkigems.cloud' },
+    //     ]
+    //   ).catch((err) => {
+    //     console.log(
+    //       `WhatsApp send failed for broker ${broker.broker_id}:`,
+    //       err.message
+    //     );
+    //   });
+    // }
+
+
     res.status(201).json({
       success: true,
       message: "Order saved successfully",
       orderNo,
     });
   } catch (error) {
-    await transaction.rollback();
+    try {
+      if (transaction._aborted !== true && transaction._begun) {
+        await transaction.rollback();
+      }
+    } catch (rbErr) {
+      console.error("Rollback failed:", rbErr.message);
+    }
+
     console.error("Create Order Error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to save order",
     });
