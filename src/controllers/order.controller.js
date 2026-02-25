@@ -2,12 +2,12 @@ import sql from "mssql";
 import { getDbPool } from "../utils/db.config.js";
 import { SendWhatsAppMessgae } from "../utils/whatsApp.js";
 const statusMain = {
-  0:'Draft',
-  1:'Sent For Review',
-  2:'Reviewer Approved',
-  3:'Order Recieved By Operator',
-  5:'Recieved Order Reviewed by Reviewer',
-  99:'Admin Order'
+  0: 'Draft',
+  1: 'Sent For Review',
+  2: 'Reviewer Approved',
+  3: 'Order Recieved By Operator',
+  5: 'Recieved Order Reviewed by Reviewer',
+  99: 'Admin Order'
 }
 export const postOrderController = async (req, res) => {
   const pool = await getDbPool();
@@ -227,38 +227,6 @@ export const postOrderController = async (req, res) => {
 
     await transaction.commit();
 
-    // 🔔 Notify each broker separately
-    const brokersResult = await pool
-      .request()
-      .input("order_id", sql.Int, orderId)
-      .query(`
-    SELECT DISTINCT 
-        os.broker_id,
-        bm.phone_number,
-        bm.broker_name
-    FROM order_stones os
-    JOIN broker_master bm ON bm.id = os.broker_id
-    WHERE os.order_id = @order_id
-      AND os.broker_id IS NOT NULL
-      AND bm.phone_number IS NOT NULL
-  `);
-
-    // for (const broker of brokersResult.recordset) {
-    //   SendWhatsAppMessgae(
-    //     broker.phone_number,
-    //     "broker_creation_msg",
-    //     [
-    //       { type: "text", text: broker.broker_name },
-    //       { type: "text", text: orderHeader.deliveryDate },
-    //       { type: "text", text: 'www.lkigems.cloud' },
-    //     ]
-    //   ).catch((err) => {
-    //     console.log(
-    //       `WhatsApp send failed for broker ${broker.broker_id}:`,
-    //       err.message
-    //     );
-    //   });
-    // }
 
 
     res.status(201).json({
@@ -619,10 +587,6 @@ export const reviewOrderPricingController = async (req, res) => {
       .input("discount_reason", sql.VarChar(255), discount_reason || null)
       .input("reviewed_at", sql.DateTime, new Date())
 
-    /* ---------------------------------------------------
-       1️⃣ Update reviewed item
-    --------------------------------------------------- */
-
     let updateItemQuery = "";
 
     if (item_type === "STONE") {
@@ -664,6 +628,49 @@ export const reviewOrderPricingController = async (req, res) => {
     }
 
     const updateResult = await request.query(updateItemQuery);
+    let detailsQuery = "";
+
+    if (item_type === "STONE") {
+      detailsQuery = `
+    SELECT 
+      o.order_no,
+      o.created_at,
+      s.supply_date,
+      b.id AS broker_id,
+      b.broker_name,
+      b.phone_number
+    FROM order_stones s
+    JOIN orders o ON o.id = s.order_id
+    JOIN broker_master b ON b.id = s.broker_id
+    WHERE s.id = @item_id AND s.order_id = @order_id
+  `;
+    } else {
+      detailsQuery = `
+    SELECT 
+      o.order_no,
+      o.created_at,
+      t.supply_date,
+      b.id AS broker_id,
+      b.broker_name,
+      b.phone_number
+    FROM order_tools t
+    JOIN orders o ON o.id = t.order_id
+    JOIN broker_master b ON b.id = t.broker_id
+    WHERE t.id = @item_id AND t.order_id = @order_id
+  `;
+    }
+
+    const detailsResult = await request.query(detailsQuery);
+
+    if (!detailsResult.recordset.length) {
+      // await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Broker / Order details not found for this item",
+      });
+    }
+
+    const broker = detailsResult.recordset[0];
 
     if (updateResult.rowsAffected[0] === 0) {
       await transaction.rollback();
@@ -672,10 +679,6 @@ export const reviewOrderPricingController = async (req, res) => {
         message: "Item not found or already reviewed",
       });
     }
-
-    /* ---------------------------------------------------
-       2️⃣ Check if ANY item is still unreviewed
-    --------------------------------------------------- */
 
     const pendingCheck = await request.query(`
       SELECT
@@ -693,10 +696,6 @@ export const reviewOrderPricingController = async (req, res) => {
 
     const pendingCount = pendingCheck.recordset[0].pendingCount;
 
-    /* ---------------------------------------------------
-       3️⃣ If none pending → mark order reviewed
-    --------------------------------------------------- */
-
     if (pendingCount === 0) {
       await request.query(`
         UPDATE orders
@@ -704,6 +703,26 @@ export const reviewOrderPricingController = async (req, res) => {
         WHERE id = @order_id
       `);
     }
+
+    const printUrl = `https://lkigems.cloud/api/public/review-print?order_id=${order_id}&item_id=${item_id}&item_type=${item_type}`;
+
+    SendWhatsAppMessgae(
+      broker.phone_number,
+      "order_creation_brkr_msg",
+      [
+        { type: "text", text: broker.broker_name },
+        { type: "text", text: broker.order_no },
+        { type: "text", text: new Date(broker.created_at).toLocaleDateString("en-GB") },
+        { type: "text", text: broker.supply_date ? new Date(broker.supply_date).toLocaleDateString("en-GB") : "-" },
+        { type: "text", text: printUrl }, // ✅ ITEM-ONLY PRINT LINK
+      ]
+    ).catch((err) => {
+      console.log(
+        `WhatsApp send failed for broker ${broker.broker_id}:`,
+        err.message
+      );
+    });
+
 
     await transaction.commit();
 

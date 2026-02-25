@@ -1,6 +1,7 @@
 import { loginService } from "../services/auth.service.js";
 
 export const loginController = async (req, res) => {
+  console.log(req.body,'req.body')
   try {
     const { email, password, rememberMe } = req.body;
 

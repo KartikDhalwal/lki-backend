@@ -4,6 +4,7 @@ import authRoutes from "./src/routes/auth.routes.js";
 import masterRoutes from "./src/routes/masters.routes.js";
 import orderRoutes from "./src/routes/order.routes.js";
 import adminRoutes from "./src/routes/admin.routes.js";
+import publicRoutes from "./src/routes/public.routes.js";
 
 const app = express();
 
@@ -15,5 +16,6 @@ app.use("/api/auth", authRoutes);
 app.use("/api/master", masterRoutes);
 app.use("/api/order", orderRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/public", publicRoutes);
 
 export default app;
