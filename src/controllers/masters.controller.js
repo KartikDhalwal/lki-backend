@@ -84,24 +84,25 @@ export const getStoneMasterController = async (req, res) => {
       .query(`
         SELECT
             id as value,
-            stone_name AS stoneName,
-            sku AS label,
-          family,
-          stone_type AS category,
+            UPPER(stone_name) AS stoneName,
+            UPPER(sku) AS label,
+          UPPER(family) as family,
+          UPPER(stone_type) AS category,
           size,
-          shape,
-          quality AS grade,
-          colour,
-          mou,
-          grs AS certificate,
+          UPPER(shape) as shape,
+          UPPER(quality) AS grade,
+          UPPER(colour) as colour,
+          UPPER(mou) as mou,
+          UPPER(grs) AS certificate,
           min_height AS minHeight,
           max_height AS maxHeight,
-          mou_type AS mouType,
-          cut
+          UPPER(mou_type) AS mouType,
+          UPPER(cut) as cut
         FROM stone_master 
+        WHERE isActive = 1
         ORDER BY stoneName ASC
       `);
-
+        console.log(dataQuery.recordset)
     res.json({
       success: true,
       data: dataQuery.recordset,
@@ -310,14 +311,15 @@ export const getToolsMasterController = async (req, res) => {
       .query(`
         SELECT
           id as value,
-          tool_name AS label,
-          type,
-          usage,
-          comments,
-          notes,
-          mou,
-          category
+          UPPER(tool_name) AS label,
+          UPPER(type) as type,
+          UPPER(usage) as usage,
+          UPPER(comments) as comments,
+          UPPER(notes) as notes,
+          UPPER(mou) as mou,
+          UPPER(category) as category
         FROM tool_master
+        WHERE isActive = 1
       `);
 
     res.json({
@@ -472,8 +474,10 @@ export const getBrokersMasterController = async (req, res) => {
       .query(`
         SELECT
           id as value,
-          broker_name AS label
-        FROM broker_master`);
+          UPPER(broker_name) AS label
+        FROM broker_master
+                WHERE isActive = 1
+        `);
 
     res.json({
       success: true,
@@ -649,7 +653,7 @@ export const getMasterOptions = async (req, res) => {
       .request()
       .input("type", sql.NVarChar, type)
       .query(`
-        SELECT master_code as id, master_name as name
+        SELECT master_code as id, UPPER(master_name) as name
         FROM master_options
         WHERE master_type = @type AND isActive = 1
         ORDER BY name

@@ -34,6 +34,15 @@ export const postOrderController = async (req, res) => {
     );
 
     const orderNo = `ORD-${Date.now()}`;
+let category = "UNKNOWN";
+
+if (stones.length && tools.length) {
+  category = "MIXED";
+} else if (stones.length) {
+  category = "STONE";
+} else if (tools.length) {
+  category = "TOOL";
+}
 
     await transaction.begin();
 
@@ -41,7 +50,7 @@ export const postOrderController = async (req, res) => {
       .request()
       .input("order_no", sql.NVarChar, orderNo)
       .input("status", sql.NVarChar, status)
-      .input("category", sql.NVarChar, orderHeader.category || null)
+      .input("category", sql.NVarChar, category || null)
       .input("broker_id", sql.Int, orderHeader.brokerId || null)
       .input("phone_number", sql.NVarChar, orderHeader.phoneNumber || null)
       .input(
@@ -226,7 +235,23 @@ export const postOrderController = async (req, res) => {
     }
 
     await transaction.commit();
+    // const printUrl = `https://lkigems.cloud/api/public/review-print?order_id=${order_id}&item_id=${item_id}&item_type=${item_type}`;
 
+    // SendWhatsAppMessgae(
+    //   broker.phone_number,
+    //   "order_creation_brkr_msg",
+    //   [
+    //     { type: "text", text: broker.order_no },
+    //     { type: "text", text: broker.created_by },
+    //     { type: "text", text: new Date(broker.created_at).toLocaleDateString("en-GB") },
+    //     { type: "text", text: printUrl }, 
+    //   ]
+    // ).catch((err) => {
+    //   console.log(
+    //     `WhatsApp send failed for broker ${broker.broker_id}:`,
+    //     err.message
+    //   );
+    // });
 
 
     res.status(201).json({
@@ -714,7 +739,7 @@ export const reviewOrderPricingController = async (req, res) => {
         { type: "text", text: broker.order_no },
         { type: "text", text: new Date(broker.created_at).toLocaleDateString("en-GB") },
         { type: "text", text: broker.supply_date ? new Date(broker.supply_date).toLocaleDateString("en-GB") : "-" },
-        { type: "text", text: printUrl }, // ✅ ITEM-ONLY PRINT LINK
+        { type: "text", text: printUrl }, 
       ]
     ).catch((err) => {
       console.log(
@@ -752,7 +777,11 @@ export const getOrderByIdOperatorController = async (req, res) => {
     const order = await pool.request()
       .input("id", sql.Int, id)
       .query(`
-        SELECT * FROM orders WHERE id = @id
+        SELECT CASE 
+        WHEN isReviewed = 1 THEN 'REVIEWED'
+        ELSE status 
+        END AS FinalStatus,
+        * FROM orders WHERE id = @id
       `);
 
     if (!order.recordset.length) {
@@ -783,7 +812,9 @@ LEFT JOIN tool_master t ON t.id = ot.tool_id
 LEFT JOIN broker_master b ON b.id = ot.manufacturer_id
 WHERE ot.order_id = @id
 `);
-
+        console.log({...order.recordset[0],
+        stones: stones.recordset,
+        tools: tools.recordset,})
     res.json({
       success: true,
       data: {
