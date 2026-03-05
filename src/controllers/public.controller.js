@@ -16,9 +16,7 @@ export const brokerRevieweditemPrint = async (req, res) => {
       SELECT 
   o.order_no, o.created_at,
   b.broker_name,
-  s.stone_name AS item_name,
-  s.shape, s.size, s.quantity,
-  s.reviewed_final_price
+  s.stone_name AS item_name,s.*
 FROM orders o
 JOIN order_stones s ON s.order_id = o.id
 JOIN broker_master b ON b.id = s.broker_id
@@ -33,7 +31,7 @@ SELECT
   b.broker_name,
   t.tool_name AS item_name,
   t.guage_size, t.quantity,
-  t.reviewed_final_price
+  t.reviewed_final_price, t.*
 FROM orders o
 JOIN order_tools t ON t.order_id = o.id
 JOIN broker_master b ON b.id = t.broker_id
@@ -49,7 +47,6 @@ WHERE o.id = @order_id
       .query(query);
 
     const item = result.recordset[0];
-
     if (!item) return res.status(404).send("Item not found");
 
     res.send(`
@@ -165,7 +162,7 @@ WHERE o.id = @order_id
 
       <div class="meta">
         <div><span>Broker:</span> ${item.broker_name}</div>
-        <div><span>Date:</span> ${new Date(item.created_at).toLocaleDateString("en-GB")}</div>
+        <div><span>Date:</span> ${new Date(item.reviewed_at).toLocaleDateString("en-GB")}</div>
         <div><span>Item Name:</span> ${item.item_name}</div>
         <div><span>Quantity:</span> ${item.quantity}</div>
       </div>
@@ -174,23 +171,43 @@ WHERE o.id = @order_id
         <thead>
           <tr>
             <th>#</th>
-            <th>Description</th>
+            <th>Item Name</th>
+            ${item_type === "STONE" ? `
+  <th>Shape</th>
+  <th>Size</th>
+  <th>Color</th>
+  <th>Family</th>
+  <th>Cut</th>
+  <th>Min. Height</th>
+  <th>Max. Height</th>
+` : ``}
             <th class="text-right">Qty</th>
             <th class="text-right">Rate</th>
             <th class="text-right">Amount</th>
+            <th class="text-right">Comments</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td>1</td>
             <td>${item.item_name}</td>
+            ${item_type === "STONE" ? `
+  <td>${item.shape}</td>
+  <td>${item.size}</td>
+  <td>${item.color}</td>
+  <td>${item.family}</td>
+  <td>${item.cut}</td>
+  <td>${item.min_height}</td>
+  <td>${item.max_height}</td>
+` : ``}
             <td class="text-right">${item.quantity}</td>
             <td class="text-right">₹${Number(item.reviewed_final_price).toLocaleString("en-IN")}</td>
-            <td class="text-right">₹${Number(item.reviewed_final_price).toLocaleString("en-IN")}</td>
+            <td class="text-right">₹${(Number(item.reviewed_final_price) * Number(item.quantity)).toLocaleString("en-IN", {minimumFractionDigits:2})}</td>
+            <td class="text-right">${(item.comments)}</td>
           </tr>
           <tr class="total-row">
-            <td colspan="4" class="text-right">Grand Total</td>
-            <td class="text-right">₹${Number(item.reviewed_final_price).toLocaleString("en-IN")}</td>
+            <td colspan="12" class="text-right">Grand Total</td>
+            <td class="text-right">₹${(Number(item.reviewed_final_price) * Number(item.quantity)).toLocaleString("en-IN", {minimumFractionDigits:2})}</td>
           </tr>
         </tbody>
       </table>

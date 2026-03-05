@@ -286,7 +286,7 @@ export const listOrdersController = async (req, res) => {
     const offset = (page - 1) * limit;
 
     const pool = await getDbPool();
-
+    console.log(createdBy,'createdBy')
     const dataResult = await pool
       .request()
       .input("offset", sql.Int, offset)
@@ -446,11 +446,15 @@ WHERE os.order_id = @order_id;
       .input("order_id", sql.Int, id)
       .query(`
         SELECT 
-          ot.*,
-          tm.tool_name,
-          ot.isReviewed
+        ot.*,
+        tm.tool_name,
+        ot.isReviewed,
+        plm.basePrice,
+        plm.minPrice,
+        plm.maxPrice
         FROM order_tools ot
         LEFT JOIN tool_master tm ON tm.id = ot.tool_id
+        LEFT JOIN PriceLogicMaster plm ON plm.toolId = ot.tool_id AND plm.status = 1
         WHERE ot.order_id = @order_id
       `);
 
