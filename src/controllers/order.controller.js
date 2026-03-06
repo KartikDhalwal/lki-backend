@@ -684,7 +684,7 @@ export const reviewOrderPricingController = async (req, res) => {
       b.phone_number
     FROM order_tools t
     JOIN orders o ON o.id = t.order_id
-    JOIN broker_master b ON b.id = t.broker_id
+    JOIN broker_master b ON b.id = t.manufacturer_id
     WHERE t.id = @item_id AND t.order_id = @order_id
   `;
     }
