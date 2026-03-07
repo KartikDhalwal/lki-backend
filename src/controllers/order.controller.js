@@ -284,7 +284,7 @@ export const listOrdersController = async (req, res) => {
     const limit = parseInt(req.query.limit || "10");
     const search = req.query.search || null;
     const offset = (page - 1) * limit;
-
+    console.log(page,limit,search,offset)
     const pool = await getDbPool();
     console.log(createdBy,'createdBy')
     const dataResult = await pool
@@ -361,7 +361,7 @@ export const listOrdersController = async (req, res) => {
       `);
 
     const totalItems = countResult.recordset[0].total;
-
+        console.log(dataResult.recordset,'dataResult.recordset')
     res.json({
       success: true,
       data: dataResult.recordset,
@@ -1333,7 +1333,8 @@ export const receiveOrderItemController = async (req, res) => {
           issue = @issue,
           return_date = @return_date,
           handover_to = @handover_to,
-          receive_status = @status
+          receive_status = @status,
+          statusMain = 3
         WHERE id = @id
       `);
 
@@ -1418,7 +1419,6 @@ export const listOrdersReceiveReviewController = async (req, res) => {
           o.created_at
         FROM orders o
         WHERE o.received_status IN ('Partial','Completed')
-          AND o.receive_review_status = 'Pending'
         AND o.createdBy != 'ADMIN'
         ORDER BY o.created_at DESC
         OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
