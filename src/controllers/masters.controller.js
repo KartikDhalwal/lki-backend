@@ -102,7 +102,7 @@ export const getStoneMasterController = async (req, res) => {
         WHERE isActive = 1
         ORDER BY stoneName ASC
       `);
-        console.log(dataQuery.recordset)
+        console.log(dataQuery.recordset,'hfcgvjhbk')
     res.json({
       success: true,
       data: dataQuery.recordset,
@@ -427,7 +427,12 @@ export const getBrokersController = async (req, res) => {
           gst_number AS gstNumber,
           status,
           isActive,
-          companyName
+          companyName,
+          alternate_number,
+          bankAcNo,
+          bankName,
+          entityType,
+          address
         FROM broker_master
         WHERE
           (@search IS NULL OR broker_code LIKE '%' + @search + '%'
@@ -476,7 +481,33 @@ export const getBrokersMasterController = async (req, res) => {
           id as value,
           UPPER(broker_name) AS label
         FROM broker_master
-                WHERE isActive = 1
+                WHERE isActive = 1 AND entityType = 'Broker'
+        `);
+
+    res.json({
+      success: true,
+      data: dataQuery.recordset
+    });
+  } catch (err) {
+    console.error("Fetch Broker Error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch brokers",
+    });
+  }
+};
+export const getManufacturerMasterController = async (req, res) => {
+  try {
+    const pool = await getDbPool();
+
+    const dataQuery = await pool
+      .request()
+      .query(`
+        SELECT
+          id as value,
+          UPPER(broker_name) AS label
+        FROM broker_master
+                WHERE isActive = 1 AND entityType = 'Manufacturer'
         `);
 
     res.json({
@@ -505,7 +536,8 @@ export const postBrokersController = async (req, res) => {
       status,
       bankAcNo,
       bankName,
-      companyName
+      companyName,
+      entityType
     } = req.body;
 
     if (!brokerName) {
@@ -542,11 +574,12 @@ export const postBrokersController = async (req, res) => {
       .input("bankAcNo", sql.NVarChar, bankAcNo)
       .input("bankName", sql.NVarChar, bankName)
       .input("companyName", sql.NVarChar, companyName)
+      .input("entityType", sql.NVarChar, entityType)
       .query(`
         INSERT INTO broker_master
-        (broker_name, phone_number, alternate_number, city, gst_number, address, status,bankAcNo,bankName,companyName)
+        (broker_name, phone_number, alternate_number, city, gst_number, address, status,bankAcNo,bankName,companyName,entityType)
         VALUES
-        (@broker_name, @phone_number, @alternate_number, @city, @gst_number, @address, @status,@bankAcNo,@bankName,@companyName)
+        (@broker_name, @phone_number, @alternate_number, @city, @gst_number, @address, @status,@bankAcNo,@bankName,@companyName,@entityType)
       `);
 
     res.status(201).json({ success: true });

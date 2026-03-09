@@ -1,5 +1,5 @@
 import express from "express";
-import { addMasterOptionController, createPriceLogicController, exportStoneImportTemplateController, getBrokersController, getBrokersMasterController, getMasterOptions, getNextPriceLogicIdController, getStoneController, getStoneMasterController, getToolsController, getToolsMasterController, importStoneExcelController, listPriceLogicController, postBrokersController, postStoneController, postToolsController, toggleMasterStatusController, togglePriceLogicStatusController } from "../controllers/masters.controller.js";
+import { addMasterOptionController, createPriceLogicController, exportStoneImportTemplateController, getBrokersController, getBrokersMasterController, getManufacturerMasterController, getMasterOptions, getNextPriceLogicIdController, getStoneController, getStoneMasterController, getToolsController, getToolsMasterController, importStoneExcelController, listPriceLogicController, postBrokersController, postStoneController, postToolsController, toggleMasterStatusController, togglePriceLogicStatusController } from "../controllers/masters.controller.js";
 import multer from "multer";
 import { uploadStoneImage } from "../middlewares/uploadStoneImage.js";
 
@@ -22,6 +22,7 @@ router.get("/master-tools", getToolsMasterController);
 router.post("/tools", postToolsController);
 router.get("/brokers", getBrokersController);
 router.get("/master-brokers", getBrokersMasterController);
+router.get("/master-manufacturer", getManufacturerMasterController);
 router.post("/brokers", postBrokersController);
 router.post("/add-option", addMasterOptionController);
 router.get("/list-price-logic", listPriceLogicController);
