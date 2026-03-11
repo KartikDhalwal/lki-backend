@@ -34,15 +34,15 @@ export const postOrderController = async (req, res) => {
     );
 
     const orderNo = `ORD-${Date.now()}`;
-let category = "UNKNOWN";
+    let category = "UNKNOWN";
 
-if (stones.length && tools.length) {
-  category = "MIXED";
-} else if (stones.length) {
-  category = "STONE";
-} else if (tools.length) {
-  category = "TOOL";
-}
+    if (stones.length && tools.length) {
+      category = "MIXED";
+    } else if (stones.length) {
+      category = "STONE";
+    } else if (tools.length) {
+      category = "TOOL";
+    }
 
     await transaction.begin();
 
@@ -284,9 +284,9 @@ export const listOrdersController = async (req, res) => {
     const limit = parseInt(req.query.limit || "10");
     const search = req.query.search || null;
     const offset = (page - 1) * limit;
-    console.log(page,limit,search,offset)
+    console.log(page, limit, search, offset)
     const pool = await getDbPool();
-    console.log(createdBy,'createdBy')
+    console.log(createdBy, 'createdBy')
     const dataResult = await pool
       .request()
       .input("offset", sql.Int, offset)
@@ -361,7 +361,7 @@ export const listOrdersController = async (req, res) => {
       `);
 
     const totalItems = countResult.recordset[0].total;
-        console.log(dataResult.recordset,'dataResult.recordset')
+    console.log(dataResult.recordset, 'dataResult.recordset')
     res.json({
       success: true,
       data: dataResult.recordset,
@@ -429,10 +429,13 @@ export const getOrderByIdController = async (req, res) => {
     sm.min_height,
     sm.max_height,
     sm.cut,
-    os.isReviewed
+    os.isReviewed,
+    bm.broker_name
 FROM order_stones os
 LEFT JOIN stone_master sm 
     ON sm.id = os.stone_id
+LEFT JOIN broker_master bm 
+    ON bm.id = os.broker_id
 LEFT JOIN PriceLogicMaster plm 
     ON plm.stoneId = os.stone_id 
     AND plm.status = 1
@@ -451,19 +454,56 @@ WHERE os.order_id = @order_id;
         ot.isReviewed,
         plm.basePrice,
         plm.minPrice,
-        plm.maxPrice
+        plm.maxPrice,
+        bm.broker_name,
+        ot.manufacturer_id as broker_id
         FROM order_tools ot
         LEFT JOIN tool_master tm ON tm.id = ot.tool_id
+        LEFT JOIN broker_master bm 
+    ON bm.id = ot.manufacturer_id
         LEFT JOIN PriceLogicMaster plm ON plm.toolId = ot.tool_id AND plm.status = 1
         WHERE ot.order_id = @order_id
       `);
+
+    const brokers = {};
+
+    // group stones
+    stonesRes.recordset.forEach((stone) => {
+      const brokerId = stone.broker_id || "unknown";
+
+      if (!brokers[brokerId]) {
+        brokers[brokerId] = {
+          broker_id: brokerId,
+          broker_name: stone.broker_name,
+          stones: [],
+          tools: [],
+        };
+      }
+
+      brokers[brokerId].stones.push(stone);
+    });
+
+    // group tools
+    toolsRes.recordset.forEach((tool) => {
+      const brokerId = tool.manufacturer_id || "unknown";
+
+      if (!brokers[brokerId]) {
+        brokers[brokerId] = {
+          broker_id: brokerId,
+          broker_name: tool.broker_name,
+          stones: [],
+          tools: [],
+        };
+      }
+
+      brokers[brokerId].tools.push(tool);
+    });
 
     res.json({
       success: true,
       data: {
         orderHeader: order,
-        stones: stonesRes.recordset,
-        tools: toolsRes.recordset,
+        brokers: Object.values(brokers),
       },
     });
   } catch (error) {
@@ -575,166 +615,150 @@ export const listOrdersReviewerController = async (req, res) => {
 };
 
 export const reviewOrderPricingController = async (req, res) => {
+  console.log(req.body,'req.body')
   const pool = await getDbPool();
   const transaction = new sql.Transaction(pool);
 
   try {
-    const {
-      order_id,
-      item_id,
-      item_type, // STONE | TOOL
-      base_price,
-      final_price,
-      discount,
-      discount_reason
-    } = req.body;
+    const { order_id, broker_id, items } = req.body;
 
-    if (!order_id || !item_id || !item_type) {
+    if (!order_id || !broker_id || !items?.length) {
       return res.status(400).json({
         success: false,
-        message: "order_id, item_id and item_type are required",
-      });
-    }
-
-    if (!final_price) {
-      return res.status(400).json({
-        success: false,
-        message: "Final Price is required",
+        message: "order_id, broker_id and items required",
       });
     }
 
     await transaction.begin();
 
-    const request = new sql.Request(transaction);
+    for (const item of items) {
 
-    request
+      const {
+        item_id,
+        item_type,
+        base_price,
+        final_price,
+        discount,
+        discount_reason,
+      } = item;
+
+      const request = new sql.Request(transaction);
+
+      request
+        .input("order_id", sql.Int, order_id)
+        .input("item_id", sql.Int, item_id)
+        .input("base_price", sql.Decimal(18, 2), base_price || null)
+        .input("final_price", sql.Decimal(18, 2), final_price)
+        .input("discount", sql.Decimal(5, 2), discount || null)
+        .input("discount_reason", sql.VarChar(255), discount_reason || null)
+        .input("reviewed_at", sql.DateTime, new Date());
+
+      let query = "";
+
+      if (item_type === "STONE") {
+        query = `
+          UPDATE order_stones
+          SET
+            reviewed_base_price = @base_price,
+            reviewed_final_price = @final_price,
+            reviewed_discount = @discount,
+            reviewed_discount_reason = @discount_reason,
+            reviewed_at = @reviewed_at,
+            isReviewed = 1,
+            statusMain = 2
+          WHERE id = @item_id
+          AND order_id = @order_id
+        `;
+      } 
+      else if (item_type === "TOOL") {
+        query = `
+          UPDATE order_tools
+          SET
+            reviewed_base_price = @base_price,
+            reviewed_final_price = @final_price,
+            reviewed_discount = @discount,
+            reviewed_discount_reason = @discount_reason,
+            reviewed_at = @reviewed_at,
+            isReviewed = 1,
+            statusMain = 2
+          WHERE id = @item_id
+          AND order_id = @order_id
+        `;
+      }
+
+      const updateResult = await request.query(query);
+
+      if (updateResult.rowsAffected[0] === 0) {
+        await transaction.rollback();
+        return res.status(404).json({
+          success: false,
+          message: `Item ${item_id} not found`,
+        });
+      }
+    }
+
+    // Check if order fully reviewed
+    const pendingCheck = await new sql.Request(transaction)
       .input("order_id", sql.Int, order_id)
-      .input("item_id", sql.Int, item_id)
-      .input("base_price", sql.Decimal(18, 2), base_price || null)
-      .input("final_price", sql.Decimal(18, 2), final_price)
-      .input("discount", sql.Decimal(5, 2), discount || null)
-      .input("discount_reason", sql.VarChar(255), discount_reason || null)
-      .input("reviewed_at", sql.DateTime, new Date())
-
-    let updateItemQuery = "";
-
-    if (item_type === "STONE") {
-      updateItemQuery = `
-        UPDATE order_stones
-        SET 
-          reviewed_base_price = @base_price,
-          reviewed_final_price = @final_price,
-          reviewed_discount = @discount,
-          reviewed_discount_reason = @discount_reason,
-          reviewed_at = @reviewed_at,
-          isReviewed = 1,
-          statusMain = 2
-        WHERE id = @item_id
-          AND order_id = @order_id
-          AND ISNULL(isReviewed, 0) = 0
-      `;
-    } else if (item_type === "TOOL") {
-      updateItemQuery = `
-        UPDATE order_tools
-        SET 
-          reviewed_base_price = @base_price,
-          reviewed_final_price = @final_price,
-          reviewed_discount = @discount,
-          reviewed_discount_reason = @discount_reason,
-          reviewed_at = @reviewed_at,
-          isReviewed = 1,
-          statusMain = 2
-        WHERE id = @item_id
-          AND order_id = @order_id
-          AND ISNULL(isReviewed, 0) = 0
-      `;
-    } else {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Invalid item_type",
-      });
-    }
-
-    const updateResult = await request.query(updateItemQuery);
-    let detailsQuery = "";
-
-    if (item_type === "STONE") {
-      detailsQuery = `
-    SELECT 
-      o.order_no,
-      o.created_at,
-      s.supply_date,
-      b.id AS broker_id,
-      b.broker_name,
-      b.phone_number
-    FROM order_stones s
-    JOIN orders o ON o.id = s.order_id
-    JOIN broker_master b ON b.id = s.broker_id
-    WHERE s.id = @item_id AND s.order_id = @order_id
-  `;
-    } else {
-      detailsQuery = `
-    SELECT 
-      o.order_no,
-      o.created_at,
-      t.supply_date,
-      b.id AS broker_id,
-      b.broker_name,
-      b.phone_number
-    FROM order_tools t
-    JOIN orders o ON o.id = t.order_id
-    JOIN broker_master b ON b.id = t.manufacturer_id
-    WHERE t.id = @item_id AND t.order_id = @order_id
-  `;
-    }
-
-    const detailsResult = await request.query(detailsQuery);
-
-    if (!detailsResult.recordset.length) {
-      // await transaction.rollback();
-      return res.status(404).json({
-        success: false,
-        message: "Broker / Order details not found for this item",
-      });
-    }
-
-    const broker = detailsResult.recordset[0];
-
-    if (updateResult.rowsAffected[0] === 0) {
-      await transaction.rollback();
-      return res.status(404).json({
-        success: false,
-        message: "Item not found or already reviewed",
-      });
-    }
-
-    const pendingCheck = await request.query(`
-      SELECT
+      .query(`
+        SELECT
         (
           SELECT COUNT(*) 
           FROM order_stones 
-          WHERE order_id = @order_id AND ISNULL(isReviewed, 0) = 0
+          WHERE order_id = @order_id AND ISNULL(isReviewed,0)=0
         ) +
         (
           SELECT COUNT(*) 
           FROM order_tools 
-          WHERE order_id = @order_id AND ISNULL(isReviewed, 0) = 0
+          WHERE order_id = @order_id AND ISNULL(isReviewed,0)=0
         ) AS pendingCount
-    `);
+      `);
 
     const pendingCount = pendingCheck.recordset[0].pendingCount;
 
     if (pendingCount === 0) {
-      await request.query(`
-        UPDATE orders
-        SET isReviewed = 1
-        WHERE id = @order_id
-      `);
+      await new sql.Request(transaction)
+        .input("order_id", sql.Int, order_id)
+        .query(`
+          UPDATE orders
+          SET isReviewed = 1
+          WHERE id = @order_id
+        `);
     }
 
-    const printUrl = `https://lkigems.cloud/api/public/review-print?order_id=${order_id}&item_id=${item_id}&item_type=${item_type}`;
+    // Broker details (single broker for all items)
+    const brokerDetails = await new sql.Request(transaction)
+      .input("broker_id", sql.Int, broker_id)
+      .input("order_id", sql.Int, order_id)
+      .query(`
+        SELECT 
+          o.order_no,
+          o.created_at,
+          b.id AS broker_id,
+          b.broker_name,
+          b.phone_number
+        FROM orders o
+        JOIN broker_master b ON b.id = @broker_id
+        WHERE o.id = @order_id
+      `);
 
+    if (!brokerDetails.recordset.length) {
+      await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Broker not found",
+      });
+    }
+
+    const broker = brokerDetails.recordset[0];
+
+    // Create encoded items for print URL
+    const encoded = encodeURIComponent(JSON.stringify(items));
+
+    const printUrl =
+      `https://lkigems.cloud/api/public/review-print?order_id=${order_id}&items=${encoded}`;
+
+    // WhatsApp message
     SendWhatsAppMessgae(
       broker.phone_number,
       "order_creation_brkr_msg",
@@ -742,8 +766,8 @@ export const reviewOrderPricingController = async (req, res) => {
         { type: "text", text: broker.broker_name },
         { type: "text", text: broker.order_no },
         { type: "text", text: new Date(broker.created_at).toLocaleDateString("en-GB") },
-        { type: "text", text: broker.supply_date ? new Date(broker.supply_date).toLocaleDateString("en-GB") : "-" },
-        { type: "text", text: printUrl }, 
+        { type: "text", text: new Date(broker.created_at).toLocaleDateString("en-GB") },
+        { type: "text", text: printUrl },
       ]
     ).catch((err) => {
       console.log(
@@ -752,27 +776,26 @@ export const reviewOrderPricingController = async (req, res) => {
       );
     });
 
-
     await transaction.commit();
 
-    return res.json({
+    res.json({
       success: true,
-      message:
-        pendingCount === 0
-          ? "Last item reviewed. Order marked as reviewed."
-          : "Item reviewed successfully",
-      orderReviewed: pendingCount === 0,
+      message: "All items reviewed successfully",
+      print_url: printUrl,
     });
+
   } catch (error) {
+
     await transaction.rollback();
+
     console.error("Review Pricing Error:", error);
+
     res.status(500).json({
       success: false,
-      message: "Failed to save pricing review",
+      message: "Review failed",
     });
   }
 };
-
 export const getOrderByIdOperatorController = async (req, res) => {
   const pool = await getDbPool();
   const { id } = req.params;
@@ -816,9 +839,11 @@ LEFT JOIN tool_master t ON t.id = ot.tool_id
 LEFT JOIN broker_master b ON b.id = ot.manufacturer_id
 WHERE ot.order_id = @id
 `);
-        console.log({...order.recordset[0],
-        stones: stones.recordset,
-        tools: tools.recordset,})
+    console.log({
+      ...order.recordset[0],
+      stones: stones.recordset,
+      tools: tools.recordset,
+    })
     res.json({
       success: true,
       data: {
