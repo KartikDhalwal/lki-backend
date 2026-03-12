@@ -432,7 +432,7 @@ export const getBrokersController = async (req, res) => {
           bankAcNo,
           bankName,
           entityType,
-          address
+          address,contactPerson
         FROM broker_master
         WHERE
           (@search IS NULL OR broker_code LIKE '%' + @search + '%'
@@ -537,6 +537,7 @@ export const postBrokersController = async (req, res) => {
       bankAcNo,
       bankName,
       companyName,
+      contactPerson,
       entityType
     } = req.body;
 
@@ -575,11 +576,12 @@ export const postBrokersController = async (req, res) => {
       .input("bankName", sql.NVarChar, bankName)
       .input("companyName", sql.NVarChar, companyName)
       .input("entityType", sql.NVarChar, entityType)
+      .input("contactPerson", sql.NVarChar, contactPerson)
       .query(`
         INSERT INTO broker_master
-        (broker_name, phone_number, alternate_number, city, gst_number, address, status,bankAcNo,bankName,companyName,entityType)
+        (broker_name, phone_number, alternate_number, city, gst_number, address, status,bankAcNo,bankName,companyName,entityType,contactPerson)
         VALUES
-        (@broker_name, @phone_number, @alternate_number, @city, @gst_number, @address, @status,@bankAcNo,@bankName,@companyName,@entityType)
+        (@broker_name, @phone_number, @alternate_number, @city, @gst_number, @address, @status,@bankAcNo,@bankName,@companyName,@entityType,@contactPerson)
       `);
 
     res.status(201).json({ success: true });

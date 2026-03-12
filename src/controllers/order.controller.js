@@ -761,7 +761,7 @@ export const reviewOrderPricingController = async (req, res) => {
     // WhatsApp message
     SendWhatsAppMessgae(
       broker.phone_number,
-      "order_creation_brkr_msg",
+      "final_1_msg",
       [
         { type: "text", text: broker.broker_name },
         { type: "text", text: broker.order_no },
