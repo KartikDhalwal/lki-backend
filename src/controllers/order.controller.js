@@ -294,17 +294,17 @@ export const listOrdersController = async (req, res) => {
       .input("search", sql.NVarChar, search)
       .query(`
         WITH order_data AS (
-          SELECT
-            o.id,
-            o.order_no,
+    SELECT
+        o.id,
+        o.order_no,
            CASE
       WHEN o.status = 'REVIEW' AND ISNULL(o.isReviewed, 0) <> 1 THEN 'REVIEW'
       WHEN o.status = 'DRAFT' THEN 'DRAFT'
       WHEN o.isReviewed = 1 THEN 'REVIEWED'
       ELSE o.status
     END AS status,
-            o.created_at,
-            o.delivery_date,
+        o.created_at,
+        o.delivery_date,
 
             SUM(os.quantity) AS stone_qty,
             SUM(ot.quantity) AS tool_qty,
@@ -314,39 +314,39 @@ export const listOrdersController = async (req, res) => {
             MAX(bm.broker_name) AS broker_name,
             MAX(ot.tool_id) AS tool_id
 
-          FROM orders o
-          LEFT JOIN order_stones os 
-            ON os.order_id = o.id
+    FROM orders o
+    LEFT JOIN order_stones os 
+        ON os.order_id = o.id
           LEFT JOIN broker_master bm 
             ON bm.id = os.broker_id
-          LEFT JOIN order_tools ot 
-            ON ot.order_id = o.id
+    LEFT JOIN order_tools ot 
+        ON ot.order_id = o.id
 
-          WHERE
-            (@search IS NULL OR o.order_no LIKE '%' + @search + '%')
-            AND o.createdBy = '${createdBy}'
-          GROUP BY
+    WHERE
+        (@search IS NULL OR o.order_no LIKE '%' + @search + '%')
+        AND o.createdBy = '${createdBy}'
+    GROUP BY
             o.id, o.order_no, o.status, o.created_at, o.delivery_date,o.isReviewed
-        )
-        SELECT
-          id,
-          order_no AS orderId,
+)
+SELECT
+    id,
+    order_no AS orderId,
           status,
-          created_at AS orderCreated,
-          delivery_date AS expected,
+    created_at AS orderCreated,
+    delivery_date AS expected,
           ISNULL(stone_qty, 0) as stoneQty,
           ISNULL(tool_qty, 0) as toolQty,
           ISNULL(stone_qty, 0) + ISNULL(tool_qty, 0) AS quantity,
 
-          CASE
+    CASE
             WHEN stone_qty IS NOT NULL AND tool_qty IS NOT NULL THEN 'MIXED'
             WHEN stone_qty IS NOT NULL THEN 'STONE'
             WHEN tool_qty IS NOT NULL THEN 'TOOL'
-            ELSE 'UNKNOWN'
-          END AS type
-        FROM order_data
-        ORDER BY orderCreated DESC
-        OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
+        ELSE 'UNKNOWN'
+    END AS type
+FROM order_data
+ORDER BY orderCreated DESC
+OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
       `);
 
     const countResult = await pool
@@ -1090,42 +1090,58 @@ export const receiveOrderViewController = async (req, res) => {
       .input("pageSize", sql.Int, pageSize)
       .query(`
         SELECT * FROM (
-          /* -------- Stones -------- */
-          SELECT 
-            os.id,
-            os.order_id,
-            'STONE' AS type,
-            s.sku AS code,
-            s.stone_name AS name,
-            os.size,
-            os.received_weight AS weight,
-            os.quantity AS orderedQty,
-            os.receive_status
-          FROM order_stones os
-          JOIN stone_master s ON s.id = os.stone_id
-          WHERE os.order_id = @orderId
+    SELECT 
+        os.id,
+        os.order_id,
+        'STONE' AS type,
+        s.sku AS code,
+        s.stone_name AS name,
+        os.size,
+        os.received_weight AS weight,
+        os.quantity AS orderedQty,
+        os.receive_status,
+        ISNULL(SUM(oir.received_qty),0) AS receivedQty,
+        os.quantity - ISNULL(SUM(oir.received_qty),0) AS pendingQty,
+        os.isReviewed
+    FROM order_stones os
+    JOIN stone_master s 
+        ON s.id = os.stone_id
+    LEFT JOIN order_item_receive oir 
+        ON oir.item_id = os.id 
+        AND oir.item_type = 'STONE'
+    WHERE os.order_id = @orderId
+    GROUP BY 
+        os.id, os.order_id, s.sku, s.stone_name, os.size, 
+        os.received_weight, os.quantity, os.receive_status, os.isReviewed
 
-          UNION ALL
+    UNION ALL
 
-          /* -------- Tools -------- */
-          SELECT
-            ot.id,
-            ot.order_id,
-            'TOOL' AS type,
-            CAST(t.id AS NVARCHAR) AS code,
-            t.tool_name AS name,
-            NULL AS size,
-            NULL AS weight,
-            ot.quantity AS orderedQty,
-            ot.receive_status
-          FROM order_tools ot
-          JOIN tool_master t ON t.id = ot.tool_id
-          WHERE ot.order_id = @orderId
-        ) X
-        ORDER BY type
-        OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
+    SELECT
+        ot.id,
+        ot.order_id,
+        'TOOL' AS type,
+        CAST(t.id AS NVARCHAR) AS code,
+        t.tool_name AS name,
+        NULL AS size,
+        NULL AS weight,
+        ot.quantity AS orderedQty,
+        ot.receive_status,
+        ISNULL(SUM(oir.received_qty),0) AS receivedQty,
+        ot.quantity - ISNULL(SUM(oir.received_qty),0) AS pendingQty,
+        ot.isReviewed
+    FROM order_tools ot
+    JOIN tool_master t 
+        ON t.id = ot.tool_id
+    LEFT JOIN order_item_receive oir 
+        ON oir.item_id = ot.id 
+        AND oir.item_type = 'TOOL'
+    WHERE ot.order_id = @orderId
+    GROUP BY 
+        ot.id, ot.order_id, t.id, t.tool_name, ot.quantity, ot.receive_status,ot.isReviewed
+) X
+ORDER BY type
+OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
       `);
-
     /* ---------- Total Count ---------- */
     const countResult = await pool.request()
       .input("orderId", sql.Int, orderId)
@@ -1158,6 +1174,9 @@ export const receiveOrderViewController = async (req, res) => {
         size: r.size,
         weight: r.weight,
         orderedQty: r.orderedQty,
+        pendingQty: r.pendingQty,
+        receivedQty: r.receivedQty,
+        isReviewed: r.isReviewed,
         receiveStatus: r.receive_status,
       })),
       total: countResult.recordset[0].total,
@@ -1189,24 +1208,25 @@ export const listOrdersReceiveController = async (req, res) => {
 
     // 🔍 Search
     if (search) {
-      where += ` AND (o.order_no LIKE @search OR b.brokerName LIKE @search)`;
+      where += ` AND (o.order_no LIKE @search OR b.broker_name LIKE @search)`;
     }
 
-    // 📦 Order status (CREATED / APPROVED etc.)
+    // 📦 Order approval status
     if (status) {
       where += ` AND o.status = @status`;
     }
 
-    // 📥 Receive status (Pending / Partial / Completed)
+    // 📥 Receive status filter
     if (receivedStatus) {
       where += ` AND o.received_status = @receivedStatus`;
     } else {
-      // ✅ Default: show only orders that still need receiving
-      where += ` AND o.received_status IN ('REVIEW')`;
+      // Default show orders that still need receiving
+      where += ` AND o.received_status IN ('Pending','Partial')`;
     }
 
     /* ---------- DATA QUERY ---------- */
-    const ordersResult = await pool.request()
+    const ordersResult = await pool
+      .request()
       .input("search", sql.NVarChar, `%${search}%`)
       .input("status", sql.NVarChar, status)
       .input("receivedStatus", sql.NVarChar, receivedStatus)
@@ -1232,7 +1252,8 @@ export const listOrdersReceiveController = async (req, res) => {
       `);
 
     /* ---------- COUNT QUERY ---------- */
-    const countResult = await pool.request()
+    const countResult = await pool
+      .request()
       .input("search", sql.NVarChar, `%${search}%`)
       .input("status", sql.NVarChar, status)
       .input("receivedStatus", sql.NVarChar, receivedStatus)
@@ -1250,25 +1271,26 @@ export const listOrdersReceiveController = async (req, res) => {
         id: o.id,
         orderNo: o.order_no,
         category: o.category,
-        brokerName: o.brokerName,
+        brokerName: o.broker_name,
         totalQuantity: o.total_quantity,
         deliveryDate: o.delivery_date,
         status: o.status,
         receivedStatus: o.received_status,
-        createdAt: o.created_at
+        createdAt: o.created_at,
       })),
       pagination: {
         page,
         pageSize,
-        total: countResult.recordset[0].total
-      }
+        total: countResult.recordset[0].total,
+      },
     });
 
   } catch (err) {
     console.error("Orders Receive Listing Error:", err);
+
     res.status(500).json({
       success: false,
-      message: "Failed to fetch receive orders"
+      message: "Failed to fetch receive orders",
     });
   }
 };
@@ -1280,145 +1302,176 @@ export const receiveOrderItemController = async (req, res) => {
   try {
     const {
       orderId,
-      type,        // STONE | TOOL
+      type,
       itemId,
-
       receivedQty,
       receivedWeight,
-      okQty,
-      okWeight,
-      rejectedQty,
-      rejectedWeight,
-
       issue,
       returnDate,
       handoverTo,
-      status,      // Approved | Rejected | Partial
     } = req.body;
 
-    if (!orderId || !itemId || !type) {
+    if (!orderId || !itemId || !type || !receivedQty) {
       return res.status(400).json({
         success: false,
         message: "Missing required fields",
       });
     }
 
+    const tableName =
+      type === "STONE"
+        ? "order_stones"
+        : type === "TOOL"
+        ? "order_tools"
+        : null;
+
+    if (!tableName) throw new Error("Invalid item type");
+
     await transaction.begin();
 
-    /* ------------------------------------------------
-       1️⃣ UPDATE ITEM (STONE / TOOL)
-    ------------------------------------------------ */
+    /* -----------------------------------------
+       1️⃣ Get ordered qty
+    ----------------------------------------- */
 
-    const tableName =
-      type === "STONE" ? "order_stones" :
-        type === "TOOL" ? "order_tools" :
-          null;
-
-    if (!tableName) {
-      throw new Error("Invalid item type");
-    }
-
-    // 🔒 Prevent double receive
-    const existing = await transaction.request()
+    const order = await transaction.request()
+      .input("orderId", sql.Int, orderId)
+      .query(`
+        SELECT order_no
+        FROM orders 
+        WHERE id = @orderId
+      `);
+    const orderNo = order.recordset[0].order_no;
+        console.log(orderNo)
+    const item = await transaction.request()
       .input("id", sql.Int, itemId)
       .query(`
-        SELECT receive_status
-        FROM ${tableName}
-        WHERE id = @id
+        SELECT it.*, bm.broker_name, bm.phone_number
+        FROM ${tableName} it
+        JOIN broker_master bm on bm.id = it.${tableName === "order_stones" ? 'broker_id': 'manufacturer_id'}
+        WHERE it.id = @id
       `);
 
-    if (
-      existing.recordset.length &&
-      existing.recordset[0].receive_status !== "Pending"
-    ) {
-      throw new Error("Item already received");
+    const orderedQty = item.recordset[0].quantity;
+
+    /* -----------------------------------------
+       2️⃣ Get total received so far
+    ----------------------------------------- */
+
+    const receivedResult = await transaction.request()
+      .input("itemId", sql.Int, itemId)
+      .input("type", sql.NVarChar, type)
+      .query(`
+        SELECT ISNULL(SUM(received_qty),0) as total
+        FROM order_item_receive
+        WHERE item_id = @itemId
+        AND item_type = @type
+      `);
+
+    const alreadyReceived = receivedResult.recordset[0].total;
+
+    const newTotal = alreadyReceived + Number(receivedQty);
+
+    if (newTotal > orderedQty) {
+      throw new Error("Received quantity exceeds ordered quantity");
     }
+
+    /* -----------------------------------------
+       3️⃣ Insert receive log
+    ----------------------------------------- */
+
+    await transaction.request()
+      .input("orderId", sql.Int, orderId)
+      .input("itemId", sql.Int, itemId)
+      .input("type", sql.NVarChar, type)
+      .input("receivedQty", sql.Int, receivedQty)
+      .input("receivedWeight", sql.Decimal(10,2), receivedWeight || null)
+      .input("issue", sql.NVarChar, issue || null)
+      .input("returnDate", sql.Date, returnDate || null)
+      .input("handoverTo", sql.NVarChar, handoverTo || null)
+      .query(`
+        INSERT INTO order_item_receive
+        (order_id,item_id,item_type,received_qty,received_weight,issue,return_date,handover_to)
+        VALUES
+        (@orderId,@itemId,@type,@receivedQty,@receivedWeight,@issue,@returnDate,@handoverTo)
+      `);
+
+    /* -----------------------------------------
+       4️⃣ Update item receive status
+    ----------------------------------------- */
+
+    let status = "Partial";
+
+    if (newTotal === orderedQty) status = "Completed";
 
     await transaction.request()
       .input("id", sql.Int, itemId)
-      .input("received_qty", sql.Int, Number(receivedQty))
-      .input("received_weight", sql.Decimal(10, 2), receivedWeight || null)
-      .input("ok_qty", sql.Int, okQty)
-      .input("ok_weight", sql.Decimal(10, 2), okWeight || null)
-      .input("rejected_qty", sql.Int, Number(rejectedQty))
-      .input("rejected_weight", sql.Decimal(10, 2), rejectedWeight || null)
-      .input("issue", sql.NVarChar, issue || null)
-      .input("return_date", sql.Date, returnDate || null)
-      .input("handover_to", sql.NVarChar, handoverTo || null)
       .input("status", sql.NVarChar, status)
       .query(`
         UPDATE ${tableName}
-        SET
-          received_qty = @received_qty,
-          received_weight = @received_weight,
-          ok_qty = @ok_qty,
-          ok_weight = @ok_weight,
-          rejected_qty = @rejected_qty,
-          rejected_weight = @rejected_weight,
-          issue = @issue,
-          return_date = @return_date,
-          handover_to = @handover_to,
-          receive_status = @status,
-          statusMain = 3
+        SET receive_status = @status
         WHERE id = @id
       `);
 
-    /* ------------------------------------------------
-       2️⃣ CHECK IF ALL ITEMS RECEIVED
-    ------------------------------------------------ */
+    /* -----------------------------------------
+       5️⃣ Check order receive completion
+    ----------------------------------------- */
 
-    const pendingResult = await transaction.request()
+    const pending = await transaction.request()
       .input("orderId", sql.Int, orderId)
       .query(`
         SELECT
-          (
-            SELECT COUNT(*) FROM order_stones 
-            WHERE order_id = @orderId AND receive_status = 'Pending'
-          ) +
-          (
-            SELECT COUNT(*) FROM order_tools
-            WHERE order_id = @orderId AND receive_status = 'Pending'
-          ) AS pendingCount
+        (
+          SELECT COUNT(*) FROM order_stones
+          WHERE order_id=@orderId AND receive_status!='Completed'
+        ) +
+        (
+          SELECT COUNT(*) FROM order_tools
+          WHERE order_id=@orderId AND receive_status!='Completed'
+        ) AS pending
       `);
 
-    const pendingCount = pendingResult.recordset[0].pendingCount;
+    const pendingCount = pending.recordset[0].pending;
 
-    /* ------------------------------------------------
-       3️⃣ UPDATE ORDER RECEIVE STATUS
-    ------------------------------------------------ */
-
-    const orderStatus =
-      pendingCount === 0 ? "Completed" : "Partial";
+    const orderStatus = pendingCount === 0 ? "Completed" : "Partial";
 
     await transaction.request()
       .input("orderId", sql.Int, orderId)
       .input("status", sql.NVarChar, orderStatus)
       .query(`
         UPDATE orders
-        SET
-          received_status = @status,
-          received_at = GETDATE()
-        WHERE id = @orderId
+        SET received_status = @status
+        WHERE id=@orderId
       `);
-
+        console.log(item,'item')
+      SendWhatsAppMessgae(
+        item.recordset[0].phone_number,
+        "ordr_recv_msg",
+        [
+          { type: "text", text: item.recordset[0].broker_name },
+          { type: "text", text: orderNo },
+          { type: "text", text: new Date().toLocaleDateString("en-GB") }
+        ]
+      ).catch((err) => {
+        console.log(
+          `WhatsApp send failed for broker ${item.broker_id}:`,
+          err.message
+        );
+      });
     await transaction.commit();
-
     res.json({
       success: true,
-      message:
-        pendingCount === 0
-          ? "Order fully received"
-          : "Item received successfully",
+      message: "Receive entry added",
+      itemStatus: status,
       orderStatus,
     });
 
   } catch (err) {
     await transaction.rollback();
-    console.error("Receive Item Error:", err);
+    console.error(err);
 
     res.status(500).json({
       success: false,
-      message: err.message || "Failed to receive item",
+      message: err.message,
     });
   }
 };
