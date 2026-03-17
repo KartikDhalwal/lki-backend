@@ -615,7 +615,7 @@ export const listOrdersReviewerController = async (req, res) => {
 };
 
 export const reviewOrderPricingController = async (req, res) => {
-  console.log(req.body,'req.body')
+  console.log(req.body, 'req.body')
   const pool = await getDbPool();
   const transaction = new sql.Transaction(pool);
 
@@ -669,7 +669,7 @@ export const reviewOrderPricingController = async (req, res) => {
           WHERE id = @item_id
           AND order_id = @order_id
         `;
-      } 
+      }
       else if (item_type === "TOOL") {
         query = `
           UPDATE order_tools
@@ -1094,25 +1094,28 @@ export const receiveOrderViewController = async (req, res) => {
         os.id,
         os.order_id,
         'STONE' AS type,
-        s.sku AS code,
+        CAST(s.id AS NVARCHAR) AS code,
         s.stone_name AS name,
         os.size,
         os.received_weight AS weight,
         os.quantity AS orderedQty,
         os.receive_status,
         ISNULL(SUM(oir.received_qty),0) AS receivedQty,
-        os.quantity - ISNULL(SUM(oir.received_qty),0) AS pendingQty,
-        os.isReviewed
+ISNULL(SUM(oir.rejectedQty),0) AS rejectedQty,
+os.quantity - (
+    ISNULL(SUM(oir.received_qty),0) - ISNULL(SUM(oir.rejectedQty),0)
+) AS pendingQty,        
+ os.isReviewed
     FROM order_stones os
     JOIN stone_master s 
         ON s.id = os.stone_id
     LEFT JOIN order_item_receive oir 
-        ON oir.item_id = os.id 
+        ON oir.item_id = os.stone_id 
         AND oir.item_type = 'STONE'
     WHERE os.order_id = @orderId
     GROUP BY 
         os.id, os.order_id, s.sku, s.stone_name, os.size, 
-        os.received_weight, os.quantity, os.receive_status, os.isReviewed
+        os.received_weight, os.quantity, os.receive_status, os.isReviewed, s.id
 
     UNION ALL
 
@@ -1127,13 +1130,16 @@ export const receiveOrderViewController = async (req, res) => {
         ot.quantity AS orderedQty,
         ot.receive_status,
         ISNULL(SUM(oir.received_qty),0) AS receivedQty,
-        ot.quantity - ISNULL(SUM(oir.received_qty),0) AS pendingQty,
+        ISNULL(SUM(oir.rejectedQty),0) AS rejectedQty,
+        ot.quantity - (
+    ISNULL(SUM(oir.received_qty),0) - ISNULL(SUM(oir.rejectedQty),0)
+) AS pendingQty,
         ot.isReviewed
     FROM order_tools ot
     JOIN tool_master t 
         ON t.id = ot.tool_id
     LEFT JOIN order_item_receive oir 
-        ON oir.item_id = ot.id 
+        ON oir.item_id = ot.tool_id 
         AND oir.item_type = 'TOOL'
     WHERE ot.order_id = @orderId
     GROUP BY 
@@ -1180,6 +1186,59 @@ OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
         receiveStatus: r.receive_status,
       })),
       total: countResult.recordset[0].total,
+    });
+
+  } catch (err) {
+    console.error("Receive View Error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load receive view",
+    });
+  }
+};
+export const receivePocViewController = async (req, res) => {
+  const pool = await getDbPool();
+
+  try {
+    const { id, orderId } = req.params;
+    console.log(id, orderId, 'id, orderId')
+    /* ---------- Order Header ---------- */
+    const orderResult = await pool.request()
+      .input("orderId", sql.Int, orderId)
+      .input("id", sql.Int, id)
+      .query(`
+        SELECT 
+    itr.*,itr.received_at AT TIME ZONE 'UTC' 
+        AT TIME ZONE 'India Standard Time' AS received_at_ist,
+    CASE 
+        WHEN itr.item_type = 'STONE' THEN sm.stone_name
+        WHEN itr.item_type = 'TOOL' THEN tm.tool_name
+    END AS item_name
+FROM order_item_receive itr
+
+LEFT JOIN stone_master sm 
+    ON itr.item_type = 'STONE' 
+    AND itr.item_id = sm.id
+
+LEFT JOIN tool_master tm 
+    ON itr.item_type = 'TOOL' 
+    AND itr.item_id = tm.id
+
+WHERE itr.order_id = @orderId 
+AND itr.item_id = @id`);
+    console.log(orderResult)
+    if (!orderResult.recordset.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    const order = orderResult.recordset;
+    console.log(order, 'order')
+    res.json({
+      success: true,
+      order
     });
 
   } catch (err) {
@@ -1303,6 +1362,7 @@ export const receiveOrderItemController = async (req, res) => {
     const {
       orderId,
       type,
+      id,
       itemId,
       receivedQty,
       receivedWeight,
@@ -1322,16 +1382,12 @@ export const receiveOrderItemController = async (req, res) => {
       type === "STONE"
         ? "order_stones"
         : type === "TOOL"
-        ? "order_tools"
-        : null;
+          ? "order_tools"
+          : null;
 
     if (!tableName) throw new Error("Invalid item type");
 
     await transaction.begin();
-
-    /* -----------------------------------------
-       1️⃣ Get ordered qty
-    ----------------------------------------- */
 
     const order = await transaction.request()
       .input("orderId", sql.Int, orderId)
@@ -1341,21 +1397,16 @@ export const receiveOrderItemController = async (req, res) => {
         WHERE id = @orderId
       `);
     const orderNo = order.recordset[0].order_no;
-        console.log(orderNo)
+
     const item = await transaction.request()
-      .input("id", sql.Int, itemId)
+      .input("id", sql.Int, parseInt(id))
       .query(`
         SELECT it.*, bm.broker_name, bm.phone_number
         FROM ${tableName} it
-        JOIN broker_master bm on bm.id = it.${tableName === "order_stones" ? 'broker_id': 'manufacturer_id'}
+        JOIN broker_master bm on bm.id = it.${tableName === "order_stones" ? 'broker_id' : 'manufacturer_id'}
         WHERE it.id = @id
       `);
-
     const orderedQty = item.recordset[0].quantity;
-
-    /* -----------------------------------------
-       2️⃣ Get total received so far
-    ----------------------------------------- */
 
     const receivedResult = await transaction.request()
       .input("itemId", sql.Int, itemId)
@@ -1368,53 +1419,40 @@ export const receiveOrderItemController = async (req, res) => {
       `);
 
     const alreadyReceived = receivedResult.recordset[0].total;
-
     const newTotal = alreadyReceived + Number(receivedQty);
-
     if (newTotal > orderedQty) {
       throw new Error("Received quantity exceeds ordered quantity");
     }
-
-    /* -----------------------------------------
-       3️⃣ Insert receive log
-    ----------------------------------------- */
-
+    const nowIST = new Date(
+      new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
+    );
     await transaction.request()
       .input("orderId", sql.Int, orderId)
       .input("itemId", sql.Int, itemId)
       .input("type", sql.NVarChar, type)
       .input("receivedQty", sql.Int, receivedQty)
-      .input("receivedWeight", sql.Decimal(10,2), receivedWeight || null)
+      .input("receivedWeight", sql.Decimal(10, 2), receivedWeight || null)
       .input("issue", sql.NVarChar, issue || null)
       .input("returnDate", sql.Date, returnDate || null)
       .input("handoverTo", sql.NVarChar, handoverTo || null)
+      // .input("received_at", sql.DateTime, nowIST)
       .query(`
         INSERT INTO order_item_receive
-        (order_id,item_id,item_type,received_qty,received_weight,issue,return_date,handover_to)
+        (order_id,item_id,item_type,received_qty,received_weight,issue,return_date,handover_to,received_at)
         VALUES
-        (@orderId,@itemId,@type,@receivedQty,@receivedWeight,@issue,@returnDate,@handoverTo)
+        (@orderId,@itemId,@type,@receivedQty,@receivedWeight,@issue,@returnDate,@handoverTo,GETDATE())
       `);
 
-    /* -----------------------------------------
-       4️⃣ Update item receive status
-    ----------------------------------------- */
-
     let status = "Partial";
-
     if (newTotal === orderedQty) status = "Completed";
-
     await transaction.request()
-      .input("id", sql.Int, itemId)
+      .input("id", sql.Int, id)
       .input("status", sql.NVarChar, status)
       .query(`
         UPDATE ${tableName}
         SET receive_status = @status
         WHERE id = @id
       `);
-
-    /* -----------------------------------------
-       5️⃣ Check order receive completion
-    ----------------------------------------- */
 
     const pending = await transaction.request()
       .input("orderId", sql.Int, orderId)
@@ -1442,21 +1480,22 @@ export const receiveOrderItemController = async (req, res) => {
         SET received_status = @status
         WHERE id=@orderId
       `);
-        console.log(item,'item')
-      SendWhatsAppMessgae(
-        item.recordset[0].phone_number,
-        "ordr_recv_msg",
-        [
-          { type: "text", text: item.recordset[0].broker_name },
-          { type: "text", text: orderNo },
-          { type: "text", text: new Date().toLocaleDateString("en-GB") }
-        ]
-      ).catch((err) => {
-        console.log(
-          `WhatsApp send failed for broker ${item.broker_id}:`,
-          err.message
-        );
-      });
+
+    SendWhatsAppMessgae(
+      item.recordset[0].phone_number,
+      "ordr_recv_msg",
+      [
+        { type: "text", text: item.recordset[0].broker_name },
+        { type: "text", text: orderNo },
+        { type: "text", text: new Date().toLocaleDateString("en-GB") }
+      ]
+    ).catch((err) => {
+      console.warn(
+        `WhatsApp send failed for broker ${item.broker_id}:`,
+        err.message
+      );
+    });
+
     await transaction.commit();
     res.json({
       success: true,
@@ -1680,6 +1719,84 @@ export const receiveReviewItemController = async (req, res) => {
     res.status(500).json({
       success: false,
       message: err.message || "Failed to save receive review",
+    });
+  }
+};
+
+export const pocSaveController = async (req, res) => {
+  const pool = await getDbPool();
+  const transaction = new sql.Transaction(pool);
+
+  try {
+    const {
+      orderId,
+      itemId,
+      itemType,
+      rows,
+      issue,
+      returnDate,
+      handoverTo,
+    } = req.body;
+
+    if (!orderId || !itemId || !itemType || !rows?.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields",
+      });
+    }
+
+    await transaction.begin();
+
+    const request = new sql.Request(transaction);
+
+    for (const row of rows) {
+      const request = new sql.Request(transaction);
+
+      const {
+        receiveId,
+        acceptedQty,
+        acceptedWeight,
+        rejectedQty,
+        rejectedWeight,
+      } = row;
+
+      await request
+        .input("id", sql.Int, receiveId)
+        .input("acceptedQty", sql.Int, acceptedQty || 0)
+        .input("acceptedWeight", sql.Decimal(18, 3), acceptedWeight || 0)
+        .input("rejectedQty", sql.Int, rejectedQty || 0)
+        .input("rejectedWeight", sql.Decimal(18, 3), rejectedWeight || 0)
+        .input("issue", sql.NVarChar, issue || null)
+        .input("returnDate", sql.DateTime, returnDate || null)
+        .input("handoverTo", sql.NVarChar, handoverTo || null)
+        .query(`
+      UPDATE order_item_receive
+      SET 
+        acceptedQty = @acceptedQty,
+        acceptedWeight = @acceptedWeight,
+        rejectedQty = @rejectedQty,
+        rejectedWeight = @rejectedWeight,
+        issue = @issue,
+        return_date = @returnDate,
+        handover_to = @handoverTo,
+        isPocDone = 1
+      WHERE id = @id
+    `);
+    }
+
+    await transaction.commit();
+
+    return res.status(200).json({
+      success: true,
+      message: "POC saved successfully",
+    });
+  } catch (error) {
+    await transaction.rollback();
+    console.error("POC Save Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to save POC",
     });
   }
 };
