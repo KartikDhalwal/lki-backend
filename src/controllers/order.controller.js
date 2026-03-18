@@ -1058,7 +1058,6 @@ export const receiveOrderViewController = async (req, res) => {
     const pageSize = Number(req.query.pageSize || 10);
     const offset = (page - 1) * pageSize;
 
-    /* ---------- Order Header ---------- */
     const orderResult = await pool.request()
       .input("orderId", sql.Int, orderId)
       .query(`
@@ -1083,7 +1082,6 @@ export const receiveOrderViewController = async (req, res) => {
 
     const order = orderResult.recordset[0];
 
-    /* ---------- Items (Stone + Tool UNION) ---------- */
     const itemsResult = await pool.request()
       .input("orderId", sql.Int, orderId)
       .input("offset", sql.Int, offset)
@@ -1148,7 +1146,7 @@ os.quantity - (
 ORDER BY type
 OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
       `);
-    /* ---------- Total Count ---------- */
+
     const countResult = await pool.request()
       .input("orderId", sql.Int, orderId)
       .query(`
@@ -1412,20 +1410,25 @@ export const receiveOrderItemController = async (req, res) => {
       .input("itemId", sql.Int, itemId)
       .input("type", sql.NVarChar, type)
       .query(`
-        SELECT ISNULL(SUM(received_qty),0) as total
+        SELECT 
+  ISNULL(SUM(received_qty),0) as totalReceived,
+  ISNULL(SUM(rejectedQty),0) as totalRejected
         FROM order_item_receive
         WHERE item_id = @itemId
         AND item_type = @type
       `);
 
-    const alreadyReceived = receivedResult.recordset[0].total;
-    const newTotal = alreadyReceived + Number(receivedQty);
-    if (newTotal > orderedQty) {
-      throw new Error("Received quantity exceeds ordered quantity");
+    const totalReceived = receivedResult.recordset[0].totalReceived;
+    const totalRejected = receivedResult.recordset[0].totalRejected;
+
+    const alreadyAccepted = totalReceived - totalRejected;
+
+    const newAccepted = alreadyAccepted + Number(receivedQty);
+
+    if (newAccepted > orderedQty) {
+      throw new Error("Accepted quantity exceeds ordered quantity");
     }
-    const nowIST = new Date(
-      new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
-    );
+
     await transaction.request()
       .input("orderId", sql.Int, orderId)
       .input("itemId", sql.Int, itemId)
@@ -1435,16 +1438,34 @@ export const receiveOrderItemController = async (req, res) => {
       .input("issue", sql.NVarChar, issue || null)
       .input("returnDate", sql.Date, returnDate || null)
       .input("handoverTo", sql.NVarChar, handoverTo || null)
-      // .input("received_at", sql.DateTime, nowIST)
       .query(`
-        INSERT INTO order_item_receive
-        (order_id,item_id,item_type,received_qty,received_weight,issue,return_date,handover_to,received_at)
-        VALUES
-        (@orderId,@itemId,@type,@receivedQty,@receivedWeight,@issue,@returnDate,@handoverTo,GETDATE())
-      `);
+              INSERT INTO order_item_receive
+              (
+                order_id,
+                item_id,
+                item_type,
+                received_qty,
+                received_weight,
+                issue,
+                return_date,
+                handover_to,
+                received_at
+              )
+              VALUES
+              (
+                @orderId,
+                @itemId,
+                @type,
+                @receivedQty,
+                @receivedWeight,
+                @issue,
+                @returnDate,
+                @handoverTo,
+                DATEADD(MINUTE, 330, GETUTCDATE())
+              )`);
 
     let status = "Partial";
-    if (newTotal === orderedQty) status = "Completed";
+    if (newAccepted === orderedQty) status = "Completed";
     await transaction.request()
       .input("id", sql.Int, id)
       .input("status", sql.NVarChar, status)
@@ -1750,8 +1771,9 @@ export const pocSaveController = async (req, res) => {
     const request = new sql.Request(transaction);
 
     for (const row of rows) {
+      if(!row.isPocDone){
       const request = new sql.Request(transaction);
-
+        console.log('arrived')
       const {
         receiveId,
         acceptedQty,
@@ -1782,6 +1804,7 @@ export const pocSaveController = async (req, res) => {
         isPocDone = 1
       WHERE id = @id
     `);
+        }
     }
 
     await transaction.commit();
