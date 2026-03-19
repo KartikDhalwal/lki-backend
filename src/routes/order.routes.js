@@ -1,5 +1,5 @@
 import express from "express";
-import { getOrderByIdController, getOrderByIdOperatorController, getOrderStatsController, listOrdersController, listOrdersReceiveController, listOrdersReceiveReviewController, listOrdersReviewerController, pocSaveController, postOrderController, receiveOrderItemController, receiveOrderViewController, receivePocViewController, receiveReviewItemController, receiveReviewViewController, reviewOrderPricingController, updateOrderController } from "../controllers/order.controller.js";
+import { completeOrderController, getOrderByIdController, getOrderByIdOperatorController, getOrderStatsController, listOrdersController, listOrdersReceiveController, listOrdersReceiveReviewController, listOrdersReviewerController, pocSaveController, postOrderController, receiveOrderItemController, receiveOrderViewController, receivePocViewController, receiveReviewItemController, receiveReviewViewController, reviewOrderPricingController, updateOrderController } from "../controllers/order.controller.js";
 
 const router = express.Router();
 
@@ -19,5 +19,6 @@ router.get("/:orderId/receive-view", receiveOrderViewController);
 router.get("/:orderId/receive-review-view", receiveReviewViewController);
 router.get("/:id/:orderId/receive-poc-view", receivePocViewController);
 router.put("/poc-save", pocSaveController);
+router.put("/order-force-complete/:orderId", completeOrderController);
 
 export default router;

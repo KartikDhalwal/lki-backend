@@ -1067,7 +1067,10 @@ export const receiveOrderViewController = async (req, res) => {
           o.total_quantity,
           o.delivery_date,
           o.received_status,
-          b.broker_name AS brokerName
+          b.broker_name AS brokerName,
+          o.force_completed,
+          o.completed_at,
+          o.created_at
         FROM orders o
         LEFT JOIN broker_master b ON b.id = o.broker_id
         WHERE o.id = @orderId
@@ -1168,6 +1171,9 @@ OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
         totalQuantity: order.total_quantity,
         deliveryDate: order.delivery_date,
         receivedStatus: order.received_status,
+        created_at: order.created_at,
+        force_completed: order.force_completed,
+        completed_at: order.completed_at,
       },
       items: itemsResult.recordset.map((r) => ({
         id: r.id,
@@ -1233,7 +1239,6 @@ AND itr.item_id = @id`);
     }
 
     const order = orderResult.recordset;
-    console.log(order, 'order')
     res.json({
       success: true,
       order
@@ -1771,27 +1776,27 @@ export const pocSaveController = async (req, res) => {
     const request = new sql.Request(transaction);
 
     for (const row of rows) {
-      if(!row.isPocDone){
-      const request = new sql.Request(transaction);
+      if (!row.isPocDone) {
+        const request = new sql.Request(transaction);
         console.log('arrived')
-      const {
-        receiveId,
-        acceptedQty,
-        acceptedWeight,
-        rejectedQty,
-        rejectedWeight,
-      } = row;
+        const {
+          receiveId,
+          acceptedQty,
+          acceptedWeight,
+          rejectedQty,
+          rejectedWeight,
+        } = row;
 
-      await request
-        .input("id", sql.Int, receiveId)
-        .input("acceptedQty", sql.Int, acceptedQty || 0)
-        .input("acceptedWeight", sql.Decimal(18, 3), acceptedWeight || 0)
-        .input("rejectedQty", sql.Int, rejectedQty || 0)
-        .input("rejectedWeight", sql.Decimal(18, 3), rejectedWeight || 0)
-        .input("issue", sql.NVarChar, issue || null)
-        .input("returnDate", sql.DateTime, returnDate || null)
-        .input("handoverTo", sql.NVarChar, handoverTo || null)
-        .query(`
+        await request
+          .input("id", sql.Int, receiveId)
+          .input("acceptedQty", sql.Int, acceptedQty || 0)
+          .input("acceptedWeight", sql.Decimal(18, 3), acceptedWeight || 0)
+          .input("rejectedQty", sql.Int, rejectedQty || 0)
+          .input("rejectedWeight", sql.Decimal(18, 3), rejectedWeight || 0)
+          .input("issue", sql.NVarChar, issue || null)
+          .input("returnDate", sql.DateTime, returnDate || null)
+          .input("handoverTo", sql.NVarChar, handoverTo || null)
+          .query(`
       UPDATE order_item_receive
       SET 
         acceptedQty = @acceptedQty,
@@ -1804,7 +1809,7 @@ export const pocSaveController = async (req, res) => {
         isPocDone = 1
       WHERE id = @id
     `);
-        }
+      }
     }
 
     await transaction.commit();
@@ -1820,6 +1825,63 @@ export const pocSaveController = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to save POC",
+    });
+  }
+};
+
+export const completeOrderController = async (req, res) => {
+  const pool = await getDbPool();
+  const transaction = new sql.Transaction(pool);
+
+  try {
+    const { orderId } = req.params;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: "Order ID required",
+      });
+    }
+
+    await transaction.begin();
+
+    await transaction.request()
+      .input("orderId", sql.Int, orderId)
+      .query(`
+        UPDATE orders
+        SET 
+          received_status = 'Completed',
+          force_completed = 1,
+          completed_at = DATEADD(MINUTE, 330, GETUTCDATE())
+        WHERE id = @orderId
+      `);
+
+    await transaction.request()
+      .input("orderId", sql.Int, orderId)
+      .query(`
+        UPDATE order_stones
+        SET receive_status = 'Completed'
+        WHERE order_id = @orderId;
+
+        UPDATE order_tools
+        SET receive_status = 'Completed'
+        WHERE order_id = @orderId;
+      `);
+
+    await transaction.commit();
+
+    res.json({
+      success: true,
+      message: "Order force completed successfully",
+    });
+
+  } catch (err) {
+    await transaction.rollback();
+    console.error("Complete Order Error:", err);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to complete order",
     });
   }
 };
