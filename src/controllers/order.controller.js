@@ -1113,6 +1113,7 @@ os.quantity - (
     LEFT JOIN order_item_receive oir 
         ON oir.item_id = os.stone_id 
         AND oir.item_type = 'STONE'
+        AND oir.order_id = os.order_id
     WHERE os.order_id = @orderId
     GROUP BY 
         os.id, os.order_id, s.sku, s.stone_name, os.size, 
@@ -1142,6 +1143,7 @@ os.quantity - (
     LEFT JOIN order_item_receive oir 
         ON oir.item_id = ot.tool_id 
         AND oir.item_type = 'TOOL'
+        AND oir.order_id = ot.order_id
     WHERE ot.order_id = @orderId
     GROUP BY 
         ot.id, ot.order_id, t.id, t.tool_name, ot.quantity, ot.receive_status,ot.isReviewed
@@ -1616,38 +1618,49 @@ export const receiveReviewViewController = async (req, res) => {
       .input("orderId", sql.Int, orderId)
       .query(`
         SELECT * FROM (
-          SELECT
-            os.id,
-            'STONE' AS type,
-            os.stone_name AS name,
-            os.received_qty,
-            os.ok_qty,
-            os.rejected_qty,
-            os.receive_status,
-            os.receive_review_status,
-            os.receive_review_comment
-          FROM order_stones os
-          WHERE os.order_id = @orderId
-            AND os.receive_status <> 'Pending'
+  SELECT 
+    os.id,
+    'STONE' AS type,
+    s.stone_name AS name,
+    os.quantity AS total_qty,
+    ISNULL(SUM(oir.received_qty),0) AS received_qty,
+    ISNULL(SUM(oir.acceptedQty),0) AS ok_qty,
+    ISNULL(SUM(oir.rejectedQty),0) AS rejected_qty,
+    os.receive_status,
+    os.receive_review_status,
+    os.receive_review_comment
+  FROM order_stones os
+  JOIN stone_master s ON s.id = os.stone_id
+  LEFT JOIN order_item_receive oir 
+    ON oir.item_id = os.stone_id 
+    AND oir.item_type = 'STONE'
+    AND oir.order_id = os.order_id
+  WHERE os.order_id = @orderId AND os.receive_status = 'Completed'
+  GROUP BY os.id, s.stone_name, os.receive_status, os.receive_review_status, os.receive_review_comment, os.quantity
 
-          UNION ALL
+  UNION ALL
 
-          SELECT
-            ot.id,
-            'TOOL' AS type,
-            t.tool_name AS name,
-            ot.received_qty,
-            ot.ok_qty,
-            ot.rejected_qty,
-            ot.receive_status,
-            ot.receive_review_status,
-            ot.receive_review_comment
-          FROM order_tools ot
-          JOIN tool_master t ON t.id = ot.tool_id
-          WHERE ot.order_id = @orderId
-            AND ot.receive_status <> 'Pending'
-        ) X
-        ORDER BY type
+  SELECT 
+    ot.id,
+    'TOOL' AS type,
+    t.tool_name AS name,
+    ot.quantity AS total_qty,
+    ISNULL(SUM(oir.received_qty),0),
+    ISNULL(SUM(oir.acceptedQty),0),
+    ISNULL(SUM(oir.rejectedQty),0),
+    ot.receive_status,
+    ot.receive_review_status,
+    ot.receive_review_comment
+  FROM order_tools ot
+  JOIN tool_master t ON t.id = ot.tool_id
+  LEFT JOIN order_item_receive oir 
+    ON oir.item_id = ot.tool_id 
+    AND oir.item_type = 'TOOL'
+    AND oir.order_id = ot.order_id
+  WHERE ot.order_id = @orderId AND ot.receive_status = 'Completed'
+  GROUP BY ot.id, t.tool_name, ot.receive_status, ot.receive_review_status, ot.receive_review_comment,ot.quantity
+) X
+ORDER BY type
       `);
 
     res.json({
@@ -1665,86 +1678,63 @@ export const receiveReviewViewController = async (req, res) => {
   }
 };
 
-export const receiveReviewItemController = async (req, res) => {
+export const receiveReviewOrderController = async (req, res) => {
   const pool = await getDbPool();
   const transaction = new sql.Transaction(pool);
 
   try {
-    const {
-      orderId,
-      itemId,
-      type,                 // STONE | TOOL
-      reviewStatus,         // Approved | Rejected
-      reviewComment,
-      reviewerId,
-    } = req.body;
+    const { orderId, reviewStatus, reviewComment, reviewerId } = req.body;
 
     await transaction.begin();
 
-    const table =
-      type === "STONE" ? "order_stones" :
-        type === "TOOL" ? "order_tools" :
-          null;
-
-    if (!table) throw new Error("Invalid item type");
-
+    // ✅ Update ALL items at once
     await transaction.request()
-      .input("id", sql.Int, itemId)
+      .input("orderId", sql.Int, orderId)
       .input("status", sql.NVarChar, reviewStatus)
       .input("comment", sql.NVarChar, reviewComment || null)
       .input("reviewer", sql.Int, reviewerId)
       .query(`
-        UPDATE ${table}
+        UPDATE order_stones
         SET
           receive_review_status = @status,
           receive_review_comment = @comment,
           receive_reviewed_at = GETDATE(),
           receive_reviewed_by = @reviewer
-        WHERE id = @id
+        WHERE order_id = @orderId;
+
+        UPDATE order_tools
+        SET
+          receive_review_status = @status,
+          receive_review_comment = @comment,
+          receive_reviewed_at = GETDATE(),
+          receive_reviewed_by = @reviewer
+        WHERE order_id = @orderId;
       `);
 
-    /* ---------- Check if all received items reviewed ---------- */
-    const pending = await transaction.request()
+    // ✅ Update order review status
+    await transaction.request()
       .input("orderId", sql.Int, orderId)
+      .input("status", sql.NVarChar, reviewStatus)
       .query(`
-        SELECT
-          (
-            SELECT COUNT(*) FROM order_stones
-            WHERE order_id = @orderId
-              AND receive_status <> 'Pending'
-              AND receive_review_status = 'Pending'
-          ) +
-          (
-            SELECT COUNT(*) FROM order_tools
-            WHERE order_id = @orderId
-              AND receive_status <> 'Pending'
-              AND receive_review_status = 'Pending'
-          ) AS pending
+        UPDATE orders
+        SET receive_review_status = @status
+        WHERE id = @orderId
       `);
-
-    if (pending.recordset[0].pending === 0) {
-      await transaction.request()
-        .input("orderId", sql.Int, orderId)
-        .query(`
-          UPDATE orders
-          SET receive_review_status = 'Completed'
-          WHERE id = @orderId
-        `);
-    }
 
     await transaction.commit();
 
     res.json({
       success: true,
-      message: "Receive review saved successfully",
+      message: "Order review completed",
     });
 
   } catch (err) {
     await transaction.rollback();
-    console.error("Receive Review Save Error", err);
+    console.error(err);
+
     res.status(500).json({
       success: false,
-      message: err.message || "Failed to save receive review",
+      message: "Failed to review order",
     });
   }
 };
