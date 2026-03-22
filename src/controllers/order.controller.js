@@ -1555,7 +1555,7 @@ export const listOrdersReceiveReviewController = async (req, res) => {
     const offset = (page - 1) * pageSize;
 
     let where = `
-      WHERE o.received_status IN ('Partial','Completed')
+      WHERE o.received_status IN ('Completed')
       AND o.createdBy != 'ADMIN'
     `;
 
