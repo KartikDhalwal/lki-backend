@@ -1416,6 +1416,7 @@ export const receiveOrderItemController = async (req, res) => {
     const receivedResult = await transaction.request()
       .input("itemId", sql.Int, itemId)
       .input("type", sql.NVarChar, type)
+      .input("orderId", sql.Int, orderId)
       .query(`
         SELECT 
   ISNULL(SUM(received_qty),0) as totalReceived,
@@ -1423,14 +1424,15 @@ export const receiveOrderItemController = async (req, res) => {
         FROM order_item_receive
         WHERE item_id = @itemId
         AND item_type = @type
+        AND order_id = @orderId
       `);
 
     const totalReceived = receivedResult.recordset[0].totalReceived;
     const totalRejected = receivedResult.recordset[0].totalRejected;
-
     const alreadyAccepted = totalReceived - totalRejected;
-
+    
     const newAccepted = alreadyAccepted + Number(receivedQty);
+    console.log({totalReceived,totalRejected,alreadyAccepted,newAccepted})
 
     if (newAccepted > orderedQty) {
       throw new Error("Accepted quantity exceeds ordered quantity");
@@ -1549,9 +1551,23 @@ export const listOrdersReceiveReviewController = async (req, res) => {
   try {
     const page = Number(req.query.page || 1);
     const pageSize = Number(req.query.pageSize || 10);
+    const search = req.query.search || "";
     const offset = (page - 1) * pageSize;
 
-    const result = await pool.request()
+    let where = `
+      WHERE o.received_status IN ('Partial','Completed')
+      AND o.createdBy != 'ADMIN'
+    `;
+
+    if (search) {
+      where += ` AND o.order_no LIKE @search`;
+    }
+
+    const baseRequest = pool.request()
+      .input("search", sql.NVarChar, `%${search}%`);
+
+    // ✅ DATA QUERY
+    const result = await baseRequest
       .input("offset", sql.Int, offset)
       .input("pageSize", sql.Int, pageSize)
       .query(`
@@ -1563,19 +1579,19 @@ export const listOrdersReceiveReviewController = async (req, res) => {
           o.receive_review_status,
           o.created_at
         FROM orders o
-        WHERE o.received_status IN ('Partial','Completed')
-        AND o.createdBy != 'ADMIN'
+        ${where}
         ORDER BY o.created_at DESC
         OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
       `);
 
-    const count = await pool.request().query(`
-      SELECT COUNT(*) AS total
-      FROM orders
-      WHERE received_status IN ('Partial','Completed')
-        AND receive_review_status = 'Pending'
-        AND createdBy != 'ADMIN'
-    `);
+    // ✅ COUNT QUERY (same WHERE)
+    const count = await pool.request()
+      .input("search", sql.NVarChar, `%${search}%`)
+      .query(`
+        SELECT COUNT(*) AS total
+        FROM orders o
+        ${where}
+      `);
 
     res.json({
       success: true,
@@ -1683,7 +1699,7 @@ export const receiveReviewOrderController = async (req, res) => {
   const transaction = new sql.Transaction(pool);
 
   try {
-    const { orderId, reviewStatus, reviewComment, reviewerId } = req.body;
+    const { orderId,orderItemId, reviewStatus, reviewComment, reviewerId } = req.body;
 
     await transaction.begin();
 
@@ -1693,6 +1709,7 @@ export const receiveReviewOrderController = async (req, res) => {
       .input("status", sql.NVarChar, reviewStatus)
       .input("comment", sql.NVarChar, reviewComment || null)
       .input("reviewer", sql.Int, reviewerId)
+      .input("id", sql.Int, orderItemId)
       .query(`
         UPDATE order_stones
         SET
@@ -1700,7 +1717,7 @@ export const receiveReviewOrderController = async (req, res) => {
           receive_review_comment = @comment,
           receive_reviewed_at = GETDATE(),
           receive_reviewed_by = @reviewer
-        WHERE order_id = @orderId;
+        WHERE order_id = @orderId AND id = @id;
 
         UPDATE order_tools
         SET
@@ -1708,7 +1725,7 @@ export const receiveReviewOrderController = async (req, res) => {
           receive_review_comment = @comment,
           receive_reviewed_at = GETDATE(),
           receive_reviewed_by = @reviewer
-        WHERE order_id = @orderId;
+        WHERE order_id = @orderId AND id = @id;
       `);
 
     // ✅ Update order review status
@@ -1820,6 +1837,7 @@ export const pocSaveController = async (req, res) => {
 };
 
 export const completeOrderController = async (req, res) => {
+  console.log(req.params,'req.params')
   const pool = await getDbPool();
   const transaction = new sql.Transaction(pool);
 

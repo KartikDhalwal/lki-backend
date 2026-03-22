@@ -9,7 +9,7 @@ router.get("/list", listOrdersController);
 router.get("/list-reviewer", listOrdersReviewerController);
 router.get("/receive-review", listOrdersReceiveReviewController);
 router.post("/receive-item", receiveOrderItemController);
-router.post("/receive-review-item", receiveReviewOrderController);
+router.post("/receive-review-order", receiveReviewOrderController);
 router.get("/order/:id", getOrderByIdController);
 router.post("/order-review", reviewOrderPricingController);
 router.get("/order-receive", listOrdersReceiveController);
