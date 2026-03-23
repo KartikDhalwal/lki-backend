@@ -30,6 +30,7 @@ export const brokerRevieweditemPrint = async (req, res) => {
         SELECT 
           o.order_no,
           o.created_at,
+          o.referenceNo,
           b.broker_name,
           s.stone_name AS item_name,
           'STONE' AS item_type,
@@ -251,14 +252,15 @@ export const brokerRevieweditemPrint = async (req, res) => {
                 <p><strong>Phone:</strong> +91-9829950454 | <strong>Email:</strong> info@lordkrishnainternational.com</p>
             </div>
             <div class="bill-title">
-                <h2>ESTIMATION</h2>
+                <h2>ORDER</h2>
                 <p><strong>Order No:</strong> ${firstItem.order_no || "N/A"}</p>
+                <p><strong>Order Ref No:</strong> ${firstItem.referenceNo || "N/A"}</p>
             </div>
         </div>
 
         <div class="meta">
             <div><span>Vendor Partner:</span> ${firstItem.broker_name || "N/A"}</div>
-            <div class="text-center"><span>Date:</span> ${new Date().toLocaleDateString("en-GB")}</div>
+            <div class="text-center"><span>Order Date:</span> ${new Date().toLocaleDateString("en-GB")}</div>
             <div class="text-right"><span>Total Items:</span> ${allItems.length}</div>
         </div>
 

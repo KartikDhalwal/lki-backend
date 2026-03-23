@@ -76,6 +76,7 @@ export const postOrderController = async (req, res) => {
       )
       .input("total_quantity", sql.Int, totalQuantity)
       .input("createdBy", sql.NVarChar, orderHeader.createdBy || null)
+      .input("referenceNo", sql.NVarChar, orderHeader.referenceNo || null)
       .query(`
         INSERT INTO orders (
           order_no,
@@ -89,7 +90,8 @@ export const postOrderController = async (req, res) => {
           instructions,
           delivery_date,
           total_quantity,
-          createdBy
+          createdBy,
+          referenceNo
         )
         OUTPUT INSERTED.id
         VALUES (
@@ -104,7 +106,8 @@ export const postOrderController = async (req, res) => {
           @instructions,
           @delivery_date,
           @total_quantity,
-          @createdBy
+          @createdBy,
+          @referenceNo
         )
       `);
 
@@ -297,6 +300,7 @@ export const listOrdersController = async (req, res) => {
     SELECT
         o.id,
         o.order_no,
+        o.referenceNo,
            CASE
       WHEN o.status = 'REVIEW' AND ISNULL(o.isReviewed, 0) <> 1 THEN 'REVIEW'
       WHEN o.status = 'DRAFT' THEN 'DRAFT'
@@ -323,14 +327,15 @@ export const listOrdersController = async (req, res) => {
         ON ot.order_id = o.id
 
     WHERE
-        (@search IS NULL OR o.order_no LIKE '%' + @search + '%')
+        (@search IS NULL OR o.order_no LIKE '%' + @search + '%' OR o.referenceNo LIKE '%' + @search + '%')
         AND o.createdBy = '${createdBy}'
     GROUP BY
-            o.id, o.order_no, o.status, o.created_at, o.delivery_date,o.isReviewed
+            o.id, o.order_no, o.status, o.created_at, o.delivery_date,o.isReviewed,o.referenceNo
 )
 SELECT
     id,
     order_no AS orderId,
+    referenceNo,
           status,
     created_at AS orderCreated,
     delivery_date AS expected,
@@ -534,6 +539,7 @@ export const listOrdersReviewerController = async (req, res) => {
           SELECT
             o.id,
             o.order_no,
+            o.referenceNo,
             CASE WHEN o.isReviewed = 1 THEN 'REVIEWED'
             ELSE 'REVIEW' END AS status,
             o.created_at,
@@ -557,15 +563,16 @@ export const listOrdersReviewerController = async (req, res) => {
 
           WHERE
           o.status = 'REVIEW' AND 
-            (@search IS NULL OR o.order_no LIKE '%' + @search + '%')
+            (@search IS NULL OR o.order_no LIKE '%' + @search + '%' OR o.referenceNo LIKE '%' + @search + '%')
             AND o.createdBy != 'ADMIN'
           GROUP BY
-            o.id, o.order_no, o.status, o.created_at, o.delivery_date,o.isReviewed
+            o.id, o.order_no, o.status, o.created_at, o.delivery_date,o.isReviewed,o.referenceNo
         )
         SELECT
           id,
           order_no AS orderId,
           status,
+          referenceNo,
           created_at AS orderCreated,
           delivery_date AS expected,
           ISNULL(stone_qty, 0) as stoneQty,
@@ -590,7 +597,7 @@ export const listOrdersReviewerController = async (req, res) => {
         SELECT COUNT(*) AS total
         FROM orders o
         WHERE
-          (@search IS NULL OR o.order_no LIKE '%' + @search + '%')
+          (@search IS NULL OR o.order_no LIKE '%' + @search + '%' OR o.referenceNo LIKE '%' + @search + '%')
       `);
 
     const totalItems = countResult.recordset[0].total;
@@ -1070,7 +1077,8 @@ export const receiveOrderViewController = async (req, res) => {
           b.broker_name AS brokerName,
           o.force_completed,
           o.completed_at,
-          o.created_at
+          o.created_at,
+          o.referenceNo
         FROM orders o
         LEFT JOIN broker_master b ON b.id = o.broker_id
         WHERE o.id = @orderId
@@ -1176,6 +1184,7 @@ OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
         created_at: order.created_at,
         force_completed: order.force_completed,
         completed_at: order.completed_at,
+        referenceNo: order.referenceNo,
       },
       items: itemsResult.recordset.map((r) => ({
         id: r.id,
@@ -1430,9 +1439,9 @@ export const receiveOrderItemController = async (req, res) => {
     const totalReceived = receivedResult.recordset[0].totalReceived;
     const totalRejected = receivedResult.recordset[0].totalRejected;
     const alreadyAccepted = totalReceived - totalRejected;
-    
+
     const newAccepted = alreadyAccepted + Number(receivedQty);
-    console.log({totalReceived,totalRejected,alreadyAccepted,newAccepted})
+    console.log({ totalReceived, totalRejected, alreadyAccepted, newAccepted })
 
     if (newAccepted > orderedQty) {
       throw new Error("Accepted quantity exceeds ordered quantity");
@@ -1554,14 +1563,18 @@ export const listOrdersReceiveReviewController = async (req, res) => {
     const search = req.query.search || "";
     const offset = (page - 1) * pageSize;
 
-    let where = `
-      WHERE o.received_status IN ('Completed')
-      AND o.createdBy != 'ADMIN'
-    `;
+const where = `
+  WHERE 
+    o.received_status IN ('Completed')
+    AND o.createdBy != 'ADMIN'
+    AND (
+      @search = '' 
+      OR o.order_no LIKE @search 
+      OR o.referenceNo LIKE @search
+    )
+`;
 
-    if (search) {
-      where += ` AND o.order_no LIKE @search`;
-    }
+
 
     const baseRequest = pool.request()
       .input("search", sql.NVarChar, `%${search}%`);
@@ -1577,7 +1590,8 @@ export const listOrdersReceiveReviewController = async (req, res) => {
           o.total_quantity,
           o.received_status,
           o.receive_review_status,
-          o.created_at
+          o.created_at,
+          o.referenceNo
         FROM orders o
         ${where}
         ORDER BY o.created_at DESC
@@ -1585,14 +1599,13 @@ export const listOrdersReceiveReviewController = async (req, res) => {
       `);
 
     // ✅ COUNT QUERY (same WHERE)
-    const count = await pool.request()
-      .input("search", sql.NVarChar, `%${search}%`)
-      .query(`
-        SELECT COUNT(*) AS total
-        FROM orders o
-        ${where}
-      `);
-
+const count = await pool.request()
+  .input("search", sql.NVarChar, `%${search}%`)
+  .query(`
+    SELECT COUNT(*) AS total
+    FROM orders o
+    ${where}
+  `);
     res.json({
       success: true,
       data: result.recordset,
@@ -1625,7 +1638,8 @@ export const receiveReviewViewController = async (req, res) => {
           order_no,
           total_quantity,
           received_status,
-          receive_review_status
+          receive_review_status,
+          referenceNo
         FROM orders
         WHERE id = @orderId
       `);
@@ -1699,7 +1713,7 @@ export const receiveReviewOrderController = async (req, res) => {
   const transaction = new sql.Transaction(pool);
 
   try {
-    const { orderId,orderItemId, reviewStatus, reviewComment, reviewerId } = req.body;
+    const { orderId, orderItemId, reviewStatus, reviewComment, reviewerId } = req.body;
 
     await transaction.begin();
 
@@ -1837,7 +1851,7 @@ export const pocSaveController = async (req, res) => {
 };
 
 export const completeOrderController = async (req, res) => {
-  console.log(req.params,'req.params')
+  console.log(req.params, 'req.params')
   const pool = await getDbPool();
   const transaction = new sql.Transaction(pool);
 
